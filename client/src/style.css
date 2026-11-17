@@ -1,7 +1,22 @@
 body {
   margin: 0;
+  padding: 0;
+  height: 100vh;
+  height: 100dvh;
 }
 
-canvas {
+#root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+#game-canvas {
   display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#game-canvas:focus {
+  outline: none;
 }
