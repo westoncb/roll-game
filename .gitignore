@@ -1,0 +1,4 @@
+node_modules/
+dist/
+levels/*.tmp
+.DS_Store
