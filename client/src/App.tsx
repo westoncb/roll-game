@@ -1,3 +1,3 @@
 export function App() {
-  return <canvas aria-label="Game canvas" />
+  return <canvas aria-label="Game canvas" />;
 }
