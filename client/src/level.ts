@@ -54,10 +54,8 @@ export class Level {
   }
 
   update(input: InputState, dt: number) {
-    for (const entity of this.entities) {
-      entity.capturePreviousPose?.();
-      entity.control?.(input, dt);
-    }
+    for (const entity of this.entities) entity.visual.snapshotPose();
+    for (const entity of this.entities) entity.control?.(input, dt);
     for (const entity of this.entities) {
       if (entity.move) entity.move(this.ground, dt);
       else stepPhysics(entity.body, this.ground, dt);
@@ -67,7 +65,7 @@ export class Level {
 
   draw(ctx: CanvasRenderingContext2D, alpha = 1) {
     for (const polygon of this.ground) polygon.draw(ctx);
-    for (const entity of this.entities) entity.draw(ctx, alpha);
+    for (const entity of this.entities) entity.visual.render(ctx, alpha);
   }
 }
 

@@ -1,9 +1,10 @@
 import { vec2 } from "gl-matrix";
 import { nearbyEdges, segmentCrossesEdge } from "./collision";
+import { Drawable2D } from "./drawable";
 import type { Entity } from "./entity";
 import type { GroundEdge, GroundPolygon } from "./ground";
 import type { InputState } from "./input";
-import { collectContacts, gravityAt, stepPhysics, type PhysicsBody } from "./physics";
+import { collectContacts, gravityAt, stepPhysics, PhysicsBody } from "./physics";
 import {
   advanceAlongSurface,
   supportFromContact,
@@ -11,7 +12,7 @@ import {
   surfacePose,
   type Support
 } from "./walking";
-import { angleDifference, approach, approachAngle, lerp, tau } from "./util";
+import { angleDifference, approach, approachAngle, tau } from "./util";
 
 const legCount = 10;
 const spacing = tau / legCount;
@@ -19,6 +20,7 @@ const restLength = 23;
 const maxReach = 43;
 const footHeight = 4;
 const halfSole = 3;
+const playerColor = "#e9c680";
 // World units per second, with acceleration rates in units per second squared.
 const topSpeed = 660;
 const runAcceleration = 240;
@@ -129,8 +131,6 @@ function targetAngles(legs: Leg[], bodyAngle: number) {
 }
 
 export class Player implements Entity {
-  readonly body: PhysicsBody;
-  angle = 0;
   readonly legs: Leg[] = Array.from({ length: legCount }, (_, i) => ({
     angle: i * spacing,
     length: restLength,
@@ -143,40 +143,30 @@ export class Player implements Entity {
   private wallRight = 0;
   private jump = false;
   private groundSpeed = 0;
-  private readonly previousPosition = vec2.create();
-  private readonly renderPosition = vec2.create();
-  private previousAngle = 0;
-  private readonly previousLegs = this.legs.map(() => ({ x: 0, y: 0, footAngle: 0 }));
+  readonly visual = new Drawable2D((ctx) => this.drawLegs(ctx));
+  readonly body = new PhysicsBody(this.visual.position, 28);
+  // The root follows the center. Only the shell rolls, so ankle offsets use world axes.
+  private readonly ankles = this.legs.map(() => new Drawable2D(drawFoot, this.visual));
+  private readonly shell = new Drawable2D(drawShell, this.visual);
 
   constructor(start: vec2, ground: GroundPolygon[]) {
-    this.body = {
-      pos: vec2.clone(start),
-      vel: vec2.create(),
-      accel: vec2.create(),
-      radius: 28,
-      contacts: []
-    };
+    vec2.copy(this.visual.position, start);
     collectContacts(this.body, ground);
     this.land(ground);
     this.steerOnLanding();
-    this.capturePreviousPose();
+    this.poseAnkles();
   }
 
-  capturePreviousPose() {
-    vec2.copy(this.previousPosition, this.body.pos);
-    this.previousAngle = this.angle;
-    for (let i = 0; i < this.legs.length; i++) {
-      const leg = this.legs[i];
-      const previous = this.previousLegs[i];
-      // Blending ankle offsets and body position linearly keeps a planted ankle fixed in world space.
-      previous.x = Math.cos(leg.angle) * leg.length;
-      previous.y = Math.sin(leg.angle) * leg.length;
-      previous.footAngle = leg.footAngle;
+  private poseAnkles() {
+    for (const [i, leg] of this.legs.entries()) {
+      const ankle = this.ankles[i];
+      vec2.set(
+        ankle.position,
+        Math.cos(leg.angle) * leg.length,
+        Math.sin(leg.angle) * leg.length
+      );
+      ankle.setOrientation(leg.footAngle);
     }
-  }
-
-  positionAt(alpha: number) {
-    return vec2.lerp(this.renderPosition, this.previousPosition, this.body.pos, alpha);
   }
 
   control(input: InputState) {
@@ -218,7 +208,7 @@ export class Player implements Entity {
         this.groundSpeed *= retainedSpeed;
         vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
         vec2.zero(body.accel);
-        this.angle += travel / body.radius;
+        this.shell.rotation += travel / body.radius;
         collectContacts(body, ground);
         return;
       }
@@ -226,7 +216,7 @@ export class Player implements Entity {
       vec2.scaleAndAdd(body.vel, body.vel, normal, jumpSpeed);
       this.support = null;
     }
-    this.angle += (this.groundSpeed * dt) / body.radius;
+    this.shell.rotation += (this.groundSpeed * dt) / body.radius;
     vec2.copy(body.accel, gravityAt(body, ground));
     stepPhysics(body, ground, dt);
     this.land(ground);
@@ -268,6 +258,7 @@ export class Player implements Entity {
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
     this.updateFeet(dt, ground);
+    this.poseAnkles();
   }
 
   private findFoothold(
@@ -327,18 +318,22 @@ export class Player implements Entity {
       if (leg.foot.kind === "free") continue;
       if (
         !this.support ||
-        !reachable(this.body.pos, leg.foot.anchor, this.angle + i * spacing, edges)
+        !reachable(this.body.pos, leg.foot.anchor, this.shell.rotation + i * spacing, edges)
       ) {
         leg.foot = { kind: "free" };
       } else if (leg.foot.kind === "planted") {
         Object.assign(leg, plantedPose(this.body.pos, leg.foot.anchor));
       }
     }
-    const targets = targetAngles(this.legs, this.angle);
+    const targets = targetAngles(this.legs, this.shell.rotation);
     for (const [i, leg] of this.legs.entries()) {
       if (leg.foot.kind === "planted") continue;
       if (leg.foot.kind === "free" && this.support) {
-        const anchor = this.findFoothold(targets[i], this.angle + i * spacing, edges);
+        const anchor = this.findFoothold(
+          targets[i],
+          this.shell.rotation + i * spacing,
+          edges
+        );
         if (anchor) leg.foot = { kind: "reaching", anchor };
       }
       const target =
@@ -361,38 +356,30 @@ export class Player implements Entity {
     }
   }
 
-  draw(ctx: CanvasRenderingContext2D, alpha = 1) {
-    const [bodyX, bodyY] = this.positionAt(alpha);
-    ctx.save();
-    ctx.translate(bodyX, bodyY);
-    ctx.strokeStyle = "#e9c680";
-    ctx.fillStyle = "#e9c680";
-    for (let i = 0; i < this.legs.length; i++) {
-      const leg = this.legs[i];
-      const previous = this.previousLegs[i];
-      const x = lerp(previous.x, Math.cos(leg.angle) * leg.length, alpha);
-      const y = lerp(previous.y, Math.sin(leg.angle) * leg.length, alpha);
+  private drawLegs(ctx: CanvasRenderingContext2D) {
+    ctx.strokeStyle = playerColor;
+    for (const ankle of this.ankles) {
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      ctx.lineTo(x, y);
+      ctx.lineTo(ankle.renderPosition[0], ankle.renderPosition[1]);
       ctx.stroke();
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(
-        previous.footAngle + alpha * angleDifference(previous.footAngle, leg.footAngle)
-      );
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(footHeight, -halfSole);
-      ctx.lineTo(footHeight, halfSole);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
     }
-    ctx.rotate(lerp(this.previousAngle, this.angle, alpha));
-    ctx.beginPath();
-    ctx.roundRect(-13, -10, 26, 20, 5);
-    ctx.fill();
-    ctx.restore();
   }
+}
+
+function drawFoot(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = playerColor;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(footHeight, -halfSole);
+  ctx.lineTo(footHeight, halfSole);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawShell(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = playerColor;
+  ctx.beginPath();
+  ctx.roundRect(-13, -10, 26, 20, 5);
+  ctx.fill();
 }

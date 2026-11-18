@@ -2,13 +2,17 @@ import { vec2 } from "gl-matrix";
 import { circleGroundContact, nearestBoundary, type GroundContact } from "./collision";
 import type { GroundPolygon } from "./ground";
 
-export type PhysicsBody = {
-  pos: vec2;
-  vel: vec2;
-  accel: vec2;
-  radius: number;
-  contacts: GroundContact[];
-};
+export class PhysicsBody {
+  readonly vel = vec2.create();
+  readonly accel = vec2.create();
+  readonly contacts: GroundContact[] = [];
+
+  /** pos is the live world-space center, typically the entity's root drawable position. */
+  constructor(
+    readonly pos: vec2,
+    public radius: number
+  ) {}
+}
 
 export function stepPhysics(body: PhysicsBody, ground: GroundPolygon[], dt: number) {
   vec2.scaleAndAdd(body.vel, body.vel, body.accel, dt);

@@ -96,14 +96,8 @@ function startGame(host: HTMLElement, canvas: HTMLCanvasElement, game: GameState
       ctx.fillStyle = "#112233";
       ctx.fillRect(0, 0, width, height);
       // Account for the whole-pixel rounding of each bitmap dimension.
-      ctx.setTransform(
-        camera.zoom * (width / camera.width),
-        0,
-        0,
-        camera.zoom * (height / camera.height),
-        0,
-        0
-      );
+      ctx.scale(width / camera.width, height / camera.height);
+      camera.applyTo(ctx);
       game.level.draw(ctx, accumulator / stepSeconds);
     }
     frameId = requestAnimationFrame(frame);
