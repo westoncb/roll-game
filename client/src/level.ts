@@ -37,13 +37,16 @@ export class Level {
           polygon.gravityScale ?? 1
         )
     );
-    this.entities = [new Player(vec2.fromValues(...data.playerStart))];
+    this.entities = [new Player(vec2.fromValues(...data.playerStart), this.ground)];
   }
 
   update(input: InputState, dt: number) {
     for (const entity of this.entities) entity.control?.(input, dt);
-    for (const entity of this.entities) stepPhysics(entity.body, this.ground, dt);
-    for (const entity of this.entities) entity.afterPhysics?.(dt);
+    for (const entity of this.entities) {
+      if (entity.move) entity.move(this.ground, dt);
+      else stepPhysics(entity.body, this.ground, dt);
+    }
+    for (const entity of this.entities) entity.afterPhysics?.(dt, this.ground);
   }
 
   draw(ctx: CanvasRenderingContext2D) {

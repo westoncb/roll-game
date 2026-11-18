@@ -1,0 +1,132 @@
+import { vec2 } from "gl-matrix";
+import { nearestBoundary, type GroundContact } from "./collision";
+import type { GroundEdge, GroundPolygon } from "./ground";
+import { angleDifference } from "./util";
+
+// An edge offset is measured along its tangent. A corner offset is measured
+// along the circular arc at edge.a, starting from the preceding face.
+export type Support = { kind: "edge" | "corner"; edge: GroundEdge; offset: number };
+
+function neighbor(edge: GroundEdge, direction: number) {
+  const edges = edge.ground.edges;
+  return edges[(edge.index + direction + edges.length) % edges.length];
+}
+
+function turnAt(edge: GroundEdge) {
+  const previous = neighbor(edge, -1).tangent;
+  return angleDifference(
+    Math.atan2(previous[1], previous[0]),
+    Math.atan2(edge.tangent[1], edge.tangent[0])
+  );
+}
+
+function limits(support: Support, radius: number): [number, number] {
+  const edge = support.edge;
+  if (support.kind === "corner") return [0, radius * turnAt(edge)];
+  // At an inside corner the two offset lines meet before the original vertex.
+  const trim = (turn: number) => radius * Math.tan(Math.max(0, -turn) / 2);
+  return [trim(turnAt(edge)), edge.length - trim(turnAt(neighbor(edge, 1)))];
+}
+
+export function surfacePose(support: Support, radius: number) {
+  const { edge, offset } = support;
+  if (support.kind === "corner") {
+    const start = neighbor(edge, -1).normal;
+    const angle = Math.atan2(start[1], start[0]) + offset / radius;
+    const normal = vec2.fromValues(Math.cos(angle), Math.sin(angle));
+    return { pos: vec2.scaleAndAdd(vec2.create(), edge.a, normal, radius), normal };
+  }
+  const pos = vec2.scaleAndAdd(vec2.create(), edge.a, edge.tangent, offset);
+  vec2.scaleAndAdd(pos, pos, edge.normal, radius);
+  return { pos, normal: edge.normal };
+}
+
+export function supportFromContact(
+  contact: Pick<GroundContact, "ground" | "edgeIndex" | "point" | "normal">,
+  radius: number
+): Support {
+  const edge = contact.ground.edges[contact.edgeIndex];
+  const along = vec2.dot(vec2.subtract(vec2.create(), contact.point, edge.a), edge.tangent);
+  const corner =
+    along < 0.0001 ? edge : along > edge.length - 0.0001 ? neighbor(edge, 1) : null;
+  if (corner && turnAt(corner) > 0) {
+    const n = neighbor(corner, -1).normal;
+    const angle = angleDifference(
+      Math.atan2(n[1], n[0]),
+      Math.atan2(contact.normal[1], contact.normal[0])
+    );
+    return {
+      kind: "corner",
+      edge: corner,
+      offset: radius * Math.max(0, Math.min(turnAt(corner), angle))
+    };
+  }
+  return { kind: "edge", edge, offset: along };
+}
+
+function adjacent(support: Support, direction: number, radius: number): Support {
+  const { edge, kind } = support;
+  let next: Support;
+  if (kind === "corner") {
+    next = { kind: "edge", edge: direction > 0 ? edge : neighbor(edge, -1), offset: 0 };
+  } else {
+    const vertex = direction > 0 ? neighbor(edge, 1) : edge;
+    next =
+      turnAt(vertex) > 0.000001
+        ? { kind: "corner", edge: vertex, offset: 0 }
+        : { kind: "edge", edge: neighbor(edge, direction), offset: 0 };
+  }
+  const [start, end] = limits(next, radius);
+  next.offset = direction > 0 ? start : end;
+  return next;
+}
+
+export function advanceAlongSurface(
+  initial: Support,
+  distance: number,
+  radius: number,
+  ground: GroundPolygon[]
+) {
+  let support = initial;
+  const direction = Math.sign(distance);
+  let remaining = Math.abs(distance);
+  // A fixed tick usually stays on one feature. The bound also handles pinched passages.
+  for (let transitions = 0; remaining > 0.000001 && transitions < 32; transitions++) {
+    const [start, end] = limits(support, radius);
+    if (end < start) break;
+    const available = direction > 0 ? end - support.offset : support.offset - start;
+    const step = Math.max(0, Math.min(remaining, available));
+    const at = (travel: number): Support => ({
+      ...support,
+      offset: support.offset + direction * travel
+    });
+    const next = at(step);
+    const pos = surfacePose(next, radius).pos;
+    // Another island or a non-adjacent wall can interrupt this feature.
+    const obstruction = ground.find(
+      (p) => nearestBoundary(pos, p).distance < radius - 0.0001
+    );
+    if (obstruction) {
+      let low = 0,
+        high = step;
+      for (let i = 0; i < 16; i++) {
+        const mid = (low + high) / 2;
+        const sample = surfacePose(at(mid), radius);
+        if (nearestBoundary(sample.pos, obstruction).distance < radius - 0.0001) high = mid;
+        else low = mid;
+      }
+      const hit = nearestBoundary(surfacePose(at(high), radius).pos, obstruction);
+      remaining -= low;
+      const transfer = supportFromContact(hit, radius);
+      if (transfer.edge === support.edge && transfer.kind === support.kind) {
+        support = at(low);
+        break;
+      }
+      support = transfer;
+    } else {
+      remaining -= step;
+      support = remaining > 0.000001 ? adjacent(next, direction, radius) : next;
+    }
+  }
+  return { support, travel: distance - direction * remaining };
+}

@@ -1,6 +1,10 @@
 import { vec2 } from "gl-matrix";
 
-export type InputState = { keysDown: Set<string>; mousePos: vec2 };
+export type InputState = {
+  keysDown: Set<string>;
+  keysPressed: Set<string>;
+  mousePos: vec2;
+};
 
 export function listenForInput(canvas: HTMLCanvasElement, input: InputState): () => void {
   const controller = new AbortController();
@@ -13,12 +17,17 @@ export function listenForInput(canvas: HTMLCanvasElement, input: InputState): ()
       if (!gameKeys.has(event.code) || event.metaKey || event.ctrlKey || event.altKey)
         return;
       event.preventDefault();
+      if (!event.repeat && !input.keysDown.has(event.code))
+        input.keysPressed.add(event.code);
       input.keysDown.add(event.code);
     },
     options
   );
   canvas.addEventListener("keyup", (event) => input.keysDown.delete(event.code), options);
-  const releaseKeys = () => input.keysDown.clear();
+  const releaseKeys = () => {
+    input.keysDown.clear();
+    input.keysPressed.clear();
+  };
   canvas.addEventListener("blur", releaseKeys, options);
   window.addEventListener("blur", releaseKeys, options);
   canvas.addEventListener(

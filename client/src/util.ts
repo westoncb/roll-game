@@ -10,3 +10,17 @@ export function closestPointOnSegment(out: vec2, point: vec2, a: vec2, b: vec2) 
   const t = Math.max(0, Math.min(1, projection));
   return vec2.set(out, a[0] + t * dx, a[1] + t * dy);
 }
+
+export const tau = Math.PI * 2;
+
+export function angleDifference(from: number, to: number) {
+  return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+}
+
+export function approach(value: number, target: number, maxChange: number) {
+  return value + Math.max(-maxChange, Math.min(maxChange, target - value));
+}
+
+export function approachAngle(angle: number, target: number, maxChange: number) {
+  return approach(angle, angle + angleDifference(angle, target), maxChange);
+}

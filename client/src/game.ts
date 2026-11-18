@@ -9,7 +9,11 @@ export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not create a 2D canvas context.");
 
-  const input: InputState = { keysDown: new Set(), mousePos: vec2.create() };
+  const input: InputState = {
+    keysDown: new Set(),
+    keysPressed: new Set(),
+    mousePos: vec2.create()
+  };
   const { width, height } = canvas.getBoundingClientRect();
   const canvasSize = vec2.fromValues(width, height);
   const resizeObserver = new ResizeObserver(([entry]) => {
@@ -44,6 +48,7 @@ export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
 
     while (accumulator >= stepSeconds) {
       level.update(input, stepSeconds);
+      input.keysPressed.clear();
       accumulator -= stepSeconds;
     }
     ctx.fillStyle = "#112233";
