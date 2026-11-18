@@ -2,19 +2,22 @@ body {
   margin: 0;
 }
 
-html:has(#game-canvas) {
+html:has(#game-host) {
   overflow: hidden;
   overscroll-behavior: none;
 }
 
-#game-canvas {
+#game-host {
   position: fixed;
   inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #0a1017;
+}
+
+#game-canvas {
   display: block;
-  width: 100%;
-  height: 100vh;
-  height: 100dvh;
-  box-sizing: border-box;
   touch-action: pinch-zoom;
 }
 

@@ -6,8 +6,17 @@ import { stepPhysics } from "./physics";
 import { Player } from "./player";
 
 type Point = [number, number];
-type GroundData = { vertices: Point[]; gravityScale?: number; extendToCanvas?: boolean };
-export type LevelData = { playerStart: Point; ground: GroundData[] };
+type GroundData = { vertices: Point[]; gravityScale?: number };
+export type LevelData = {
+  width: number;
+  height: number;
+  playerStart: Point;
+  ground: GroundData[];
+};
+
+function isDimension(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
 
 function isPoint(value: unknown): value is Point {
   return Array.isArray(value) && value.length === 2 && value.every(Number.isFinite);
@@ -20,24 +29,24 @@ function isGroundData(value: unknown): value is GroundData {
     Array.isArray(vertices) &&
     vertices.length >= 3 &&
     vertices.every(isPoint) &&
-    (!("extendToCanvas" in value) || typeof value.extendToCanvas === "boolean") &&
     (!("gravityScale" in value) ||
       (typeof value.gravityScale === "number" && Number.isFinite(value.gravityScale)))
   );
 }
 
 export class Level {
+  readonly size: Readonly<{ width: number; height: number }>;
   readonly player: Player;
   readonly ground: GroundPolygon[];
   readonly entities: Entity[];
 
   constructor(data: LevelData) {
+    this.size = { width: data.width, height: data.height };
     this.ground = data.ground.map(
       (polygon) =>
         new GroundPolygon(
           polygon.vertices.map(([x, y]) => vec2.fromValues(x, y)),
-          polygon.gravityScale ?? 1,
-          polygon.extendToCanvas
+          polygon.gravityScale ?? 1
         )
     );
     this.player = new Player(vec2.fromValues(...data.playerStart), this.ground);
@@ -81,5 +90,18 @@ export async function loadLevel(id: string, signal: AbortSignal): Promise<Level>
   ) {
     throw new Error(`Level "${id}" has invalid ground polygons.`);
   }
-  return new Level({ playerStart: data.playerStart, ground: data.ground });
+  if (
+    !("width" in data) ||
+    !isDimension(data.width) ||
+    !("height" in data) ||
+    !isDimension(data.height)
+  ) {
+    throw new Error(`Level "${id}" needs a positive width and height in world units.`);
+  }
+  return new Level({
+    width: data.width,
+    height: data.height,
+    playerStart: data.playerStart,
+    ground: data.ground
+  });
 }

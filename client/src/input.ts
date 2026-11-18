@@ -1,4 +1,6 @@
-import { vec2 } from "gl-matrix";
+import type { vec2 } from "gl-matrix";
+
+import type { Camera } from "./camera";
 
 export type InputState = {
   keysDown: Set<string>;
@@ -6,7 +8,11 @@ export type InputState = {
   mousePos: vec2;
 };
 
-export function listenForInput(canvas: HTMLCanvasElement, input: InputState): () => void {
+export function listenForInput(
+  canvas: HTMLCanvasElement,
+  input: InputState,
+  camera: Camera
+): () => void {
   const controller = new AbortController();
   const options = { signal: controller.signal };
   const gameKeys = new Set(["ArrowLeft", "ArrowRight", "Space", "KeyF"]);
@@ -41,7 +47,12 @@ export function listenForInput(canvas: HTMLCanvasElement, input: InputState): ()
     "mousemove",
     (event) => {
       const bounds = canvas.getBoundingClientRect();
-      vec2.set(input.mousePos, event.clientX - bounds.left, event.clientY - bounds.top);
+      if (camera.zoom > 0) {
+        input.mousePos = camera.screenToWorld([
+          event.clientX - bounds.left,
+          event.clientY - bounds.top
+        ]);
+      }
     },
     options
   );
