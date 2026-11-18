@@ -31,6 +31,13 @@ export function listenForInput(canvas: HTMLCanvasElement, input: InputState): ()
   canvas.addEventListener("blur", releaseKeys, options);
   window.addEventListener("blur", releaseKeys, options);
   canvas.addEventListener(
+    "wheel",
+    (event) => {
+      if (!event.ctrlKey && !event.metaKey) event.preventDefault();
+    },
+    { ...options, passive: false }
+  );
+  canvas.addEventListener(
     "mousemove",
     (event) => {
       const bounds = canvas.getBoundingClientRect();
