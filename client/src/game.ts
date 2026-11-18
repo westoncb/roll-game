@@ -55,12 +55,13 @@ export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
     ctx.fillStyle = "#112233";
     ctx.fillRect(0, 0, width, height);
     // Allow movement in the middle of the view before scrolling the world.
-    const [x, y] = level.player.body.pos;
+    const alpha = accumulator / stepSeconds;
+    const [x, y] = level.player.positionAt(alpha);
     viewOrigin[0] = Math.max(x - width * 0.65, Math.min(viewOrigin[0], x - width * 0.35));
     viewOrigin[1] = Math.max(y - height * 0.65, Math.min(viewOrigin[1], y - height * 0.35));
     ctx.save();
     ctx.translate(-viewOrigin[0], -viewOrigin[1]);
-    level.draw(ctx);
+    level.draw(ctx, alpha);
     ctx.restore();
 
     frameId = requestAnimationFrame(frame);

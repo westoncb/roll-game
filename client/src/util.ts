@@ -13,6 +13,10 @@ export function closestPointOnSegment(out: vec2, point: vec2, a: vec2, b: vec2) 
 
 export const tau = Math.PI * 2;
 
+export function lerp(from: number, to: number, alpha: number) {
+  return from + (to - from) * alpha;
+}
+
 export function angleDifference(from: number, to: number) {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }

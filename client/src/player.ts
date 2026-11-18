@@ -10,7 +10,7 @@ import {
   surfacePose,
   type Support
 } from "./walking";
-import { angleDifference, approach, approachAngle, tau } from "./util";
+import { angleDifference, approach, approachAngle, lerp, tau } from "./util";
 
 const legCount = 10;
 const spacing = tau / legCount;
@@ -136,6 +136,10 @@ export class Player implements Entity {
   private direction = 0;
   private jump = false;
   private groundSpeed = 0;
+  private readonly previousPosition = vec2.create();
+  private readonly renderPosition = vec2.create();
+  private previousAngle = 0;
+  private readonly previousLegs = this.legs.map(() => ({ x: 0, y: 0, footAngle: 0 }));
 
   constructor(start: vec2, ground: GroundPolygon[]) {
     this.body = {
@@ -147,6 +151,24 @@ export class Player implements Entity {
     };
     collectContacts(this.body, ground);
     this.land(ground);
+    this.capturePreviousPose();
+  }
+
+  capturePreviousPose() {
+    vec2.copy(this.previousPosition, this.body.pos);
+    this.previousAngle = this.angle;
+    for (let i = 0; i < this.legs.length; i++) {
+      const leg = this.legs[i];
+      const previous = this.previousLegs[i];
+      // Blending ankle offsets and body position linearly keeps a planted ankle fixed in world space.
+      previous.x = Math.cos(leg.angle) * leg.length;
+      previous.y = Math.sin(leg.angle) * leg.length;
+      previous.footAngle = leg.footAngle;
+    }
+  }
+
+  positionAt(alpha: number) {
+    return vec2.lerp(this.renderPosition, this.previousPosition, this.body.pos, alpha);
   }
 
   control(input: InputState) {
@@ -311,21 +333,26 @@ export class Player implements Entity {
     }
   }
 
-  draw(ctx: CanvasRenderingContext2D) {
+  draw(ctx: CanvasRenderingContext2D, alpha = 1) {
+    const [bodyX, bodyY] = this.positionAt(alpha);
     ctx.save();
-    ctx.translate(this.body.pos[0], this.body.pos[1]);
+    ctx.translate(bodyX, bodyY);
     ctx.strokeStyle = "#e9c680";
     ctx.fillStyle = "#e9c680";
-    for (const leg of this.legs) {
-      const x = Math.cos(leg.angle) * leg.length;
-      const y = Math.sin(leg.angle) * leg.length;
+    for (let i = 0; i < this.legs.length; i++) {
+      const leg = this.legs[i];
+      const previous = this.previousLegs[i];
+      const x = lerp(previous.x, Math.cos(leg.angle) * leg.length, alpha);
+      const y = lerp(previous.y, Math.sin(leg.angle) * leg.length, alpha);
       ctx.beginPath();
       ctx.moveTo(0, 0);
       ctx.lineTo(x, y);
       ctx.stroke();
       ctx.save();
       ctx.translate(x, y);
-      ctx.rotate(leg.footAngle);
+      ctx.rotate(
+        previous.footAngle + alpha * angleDifference(previous.footAngle, leg.footAngle)
+      );
       ctx.beginPath();
       ctx.moveTo(0, 0);
       ctx.lineTo(footHeight, -halfSole);
@@ -334,7 +361,7 @@ export class Player implements Entity {
       ctx.fill();
       ctx.restore();
     }
-    ctx.rotate(this.angle);
+    ctx.rotate(lerp(this.previousAngle, this.angle, alpha));
     ctx.beginPath();
     ctx.roundRect(-13, -10, 26, 20, 5);
     ctx.fill();
