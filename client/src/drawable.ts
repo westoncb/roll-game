@@ -3,12 +3,13 @@ import { appendTransform, applyMatrix, Transform2D } from "./transform";
 import { lerp } from "./util";
 
 type Draw = (ctx: CanvasRenderingContext2D) => void;
+type DrawableColor = string | { fill: string; stroke: string };
 
 /** Draws in local coordinates. Children paint after their parent, in creation order. */
 export class Drawable2D extends Transform2D {
   declare readonly parent: Drawable2D | null;
   /** Default fill and stroke for this drawable and its descendants. */
-  color?: string;
+  color?: DrawableColor;
   private readonly children: Drawable2D[] = [];
   private previous?: Transform2D;
   private readonly sampledPosition = vec2.create();
@@ -28,7 +29,7 @@ export class Drawable2D extends Transform2D {
     return this.sampledPosition;
   }
 
-  private get paintColor(): string | undefined {
+  private get paintColor(): DrawableColor | undefined {
     return this.color ?? this.parent?.paintColor;
   }
 
@@ -66,7 +67,11 @@ export class Drawable2D extends Transform2D {
       ctx.save();
       applyMatrix(ctx, this.sampledWorld);
       const color = this.paintColor;
-      if (color !== undefined) ctx.fillStyle = ctx.strokeStyle = color;
+      if (typeof color === "string") ctx.fillStyle = ctx.strokeStyle = color;
+      else if (color) {
+        ctx.fillStyle = color.fill;
+        ctx.strokeStyle = color.stroke;
+      }
       this.draw(ctx);
       ctx.restore();
     }

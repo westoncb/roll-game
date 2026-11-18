@@ -162,6 +162,7 @@ export class Player implements Entity {
   private readonly ankles = this.legs.map(() => new Drawable2D(drawFoot, this.stance));
   private readonly shell = new Drawable2D(drawShell, this.stance);
   private readonly chargeIndicator = new Drawable2D(drawHexagon, this.shell);
+  private displayedCharge?: number;
 
   constructor(start: vec2, ground: GroundPolygon[]) {
     vec2.copy(this.visual.position, start);
@@ -233,9 +234,18 @@ export class Player implements Entity {
   }
 
   private setChargeColors(charge: number) {
-    this.visual.color = charge
-      ? `color-mix(in srgb, ${metalRim}, white ${35 * charge}%)`
-      : metalRim;
+    if (charge === this.displayedCharge) return;
+    this.displayedCharge = charge;
+    const tint = (base: string, full: string) =>
+      charge === 0 ? base : `color-mix(in srgb, ${base}, ${full} ${charge * 100}%)`;
+    const rim = tint(metalRim, "#ffffff");
+    this.stance.color = { fill: tint(legFill, "#e4e7e9"), stroke: rim };
+    this.shell.color = { fill: tint(shellFill, "#c7cbd0"), stroke: rim };
+    const footColors = {
+      fill: tint(footFill, "#ff8889"),
+      stroke: tint(footRim, "#db5159")
+    };
+    for (const ankle of this.ankles) ankle.color = footColors;
     this.chargeIndicator.color = `rgb(${Math.round(255 * charge)} 0 0)`;
   }
 
@@ -463,7 +473,7 @@ export class Player implements Entity {
     ctx.lineWidth = 4;
     ctx.stroke();
     ctx.lineWidth = 2.25;
-    ctx.strokeStyle = legFill;
+    ctx.strokeStyle = ctx.fillStyle;
     ctx.stroke();
   }
 }
@@ -474,19 +484,16 @@ function drawFoot(ctx: CanvasRenderingContext2D) {
   ctx.lineTo(footHeight, -halfSole);
   ctx.lineTo(footHeight, halfSole);
   ctx.closePath();
-  ctx.fillStyle = footFill;
   ctx.fill();
   // Keep the border inside the same triangle used to place the sole on terrain.
   ctx.clip();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = footRim;
   ctx.stroke();
 }
 
 function drawShell(ctx: CanvasRenderingContext2D) {
   ctx.beginPath();
   ctx.roundRect(-10.5, -10.5, 21, 21, 1.5);
-  ctx.fillStyle = shellFill;
   ctx.fill();
   ctx.lineWidth = 1.5;
   ctx.stroke();
