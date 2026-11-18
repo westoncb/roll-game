@@ -175,6 +175,9 @@ export class Player implements Entity {
         Math.cos(leg.angle) * leg.length,
         Math.sin(leg.angle) * leg.length
       );
+      if (leg.foot.kind !== "planted") {
+        vec2.add(ankle.position, ankle.position, this.shell.position);
+      }
       ankle.setOrientation(leg.footAngle);
     }
   }
@@ -218,7 +221,7 @@ export class Player implements Entity {
     this.visual.color = charge
       ? `color-mix(in srgb, ${playerColor}, white ${100 * charge}%)`
       : playerColor;
-    // Offset just the shell. Leg roots follow it while planted ankles stay fixed.
+    // Free and reaching feet follow this offset until they plant.
     vec2.set(
       this.shell.position,
       2.5 * charge * Math.sin(tau * 11 * time),
@@ -389,9 +392,11 @@ export class Player implements Entity {
   private updateFeet(dt: number, ground: GroundPolygon[], stance: LegStance) {
     const speed = Math.abs(this.groundSpeed);
     const rollRate = speed / this.body.radius;
+    const shake = this.shell.position;
+    const swingCenter = vec2.add(vec2.create(), stance.center, shake);
     const edges = nearbyEdges(
       stance.center,
-      stance.maxReach + footHeight + halfSole,
+      stance.maxReach + footHeight + halfSole + vec2.length(shake),
       ground
     );
     for (const [i, leg] of this.legs.entries()) {
@@ -432,7 +437,7 @@ export class Player implements Entity {
       ) {
         leg.foot = { kind: "planted", anchor: leg.foot.anchor };
       } else {
-        clearSwing(stance.center, leg, edges);
+        clearSwing(swingCenter, leg, edges);
       }
     }
   }
