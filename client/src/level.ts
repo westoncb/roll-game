@@ -6,7 +6,7 @@ import { stepPhysics } from "./physics";
 import { Player } from "./player";
 
 type Point = [number, number];
-type GroundData = { vertices: Point[]; gravityScale?: number };
+type GroundData = { vertices: Point[]; gravityScale?: number; extendToCanvas?: boolean };
 export type LevelData = { playerStart: Point; ground: GroundData[] };
 
 function isPoint(value: unknown): value is Point {
@@ -20,6 +20,7 @@ function isGroundData(value: unknown): value is GroundData {
     Array.isArray(vertices) &&
     vertices.length >= 3 &&
     vertices.every(isPoint) &&
+    (!("extendToCanvas" in value) || typeof value.extendToCanvas === "boolean") &&
     (!("gravityScale" in value) ||
       (typeof value.gravityScale === "number" && Number.isFinite(value.gravityScale)))
   );
@@ -35,7 +36,8 @@ export class Level {
       (polygon) =>
         new GroundPolygon(
           polygon.vertices.map(([x, y]) => vec2.fromValues(x, y)),
-          polygon.gravityScale ?? 1
+          polygon.gravityScale ?? 1,
+          polygon.extendToCanvas
         )
     );
     this.player = new Player(vec2.fromValues(...data.playerStart), this.ground);

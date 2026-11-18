@@ -12,10 +12,15 @@ export type GroundEdge = {
 
 export class GroundPolygon {
   readonly vertices: vec2[];
+  private drawVertices: vec2[];
   readonly gravityScale: number;
   readonly edges: GroundEdge[];
 
-  constructor(vertices: vec2[], gravityScale: number) {
+  constructor(
+    vertices: vec2[],
+    gravityScale: number,
+    private readonly extendToCanvas = false
+  ) {
     vertices = vertices.filter(
       (v, i) => !vec2.exactEquals(v, vertices[(i + 1) % vertices.length])
     );
@@ -29,6 +34,7 @@ export class GroundPolygon {
     if (!twiceArea) throw new Error("A ground polygon must enclose an area.");
     // Clockwise in canvas coordinates: positive travel walks right across a floor.
     this.vertices = twiceArea > 0 ? vertices : vertices.reverse();
+    this.drawVertices = this.vertices;
     this.edges = this.vertices.map((a, index) => {
       const b = this.vertices[(index + 1) % this.vertices.length];
       const tangent = vec2.subtract(vec2.create(), b, a);
@@ -39,12 +45,22 @@ export class GroundPolygon {
     });
   }
 
+  fitExterior(min: vec2, max: vec2, extraX: number, extraY: number) {
+    if (!this.extendToCanvas) return;
+    this.drawVertices = this.vertices.map(([x, y]) =>
+      vec2.fromValues(
+        x === min[0] ? x - extraX : x === max[0] ? x + extraX : x,
+        y === min[1] ? y - extraY : y === max[1] ? y + extraY : y
+      )
+    );
+  }
+
   draw(ctx: CanvasRenderingContext2D) {
     ctx.beginPath();
-    const first = this.vertices[0];
+    const first = this.drawVertices[0];
     ctx.moveTo(first[0], first[1]);
-    for (let i = 1; i < this.vertices.length; i++) {
-      const vertex = this.vertices[i];
+    for (let i = 1; i < this.drawVertices.length; i++) {
+      const vertex = this.drawVertices[i];
       ctx.lineTo(vertex[0], vertex[1]);
     }
     ctx.closePath();

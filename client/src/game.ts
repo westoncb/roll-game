@@ -6,21 +6,16 @@ import type { Level } from "./level";
 const stepSeconds = 1 / 60;
 
 function measureLevel(level: Level) {
-  const min = vec2.clone(level.player.body.pos);
-  const max = vec2.clone(min);
+  const { pos, radius } = level.player.body;
+  const min = vec2.fromValues(pos[0] - radius, pos[1] - radius);
+  const max = vec2.fromValues(pos[0] + radius, pos[1] + radius);
   for (const polygon of level.ground) {
     for (const vertex of polygon.vertices) {
       vec2.min(min, min, vertex);
       vec2.max(max, max, vertex);
     }
   }
-  const margin = level.player.body.radius + 8;
-  return {
-    x: min[0] - margin,
-    y: min[1] - margin,
-    width: max[0] - min[0] + 2 * margin,
-    height: max[1] - min[1] + 2 * margin
-  };
+  return { min, max, width: max[0] - min[0], height: max[1] - min[1] };
 }
 
 export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
@@ -45,6 +40,14 @@ export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
     canvas.style.height = `${height}px`;
     canvas.style.left = `${viewport?.offsetLeft ?? 0}px`;
     canvas.style.top = `${viewport?.offsetTop ?? 0}px`;
+    const zoom = Math.min(width / bounds.width, height / bounds.height);
+    if (zoom > 0) {
+      const extraX = (width / zoom - bounds.width) / 2;
+      const extraY = (height / zoom - bounds.height) / 2;
+      for (const polygon of level.ground) {
+        polygon.fitExterior(bounds.min, bounds.max, extraX, extraY);
+      }
+    }
   };
   fitViewport();
   window.addEventListener("resize", fitViewport);
@@ -74,8 +77,8 @@ export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
     ctx.fillStyle = "#112233";
     ctx.fillRect(0, 0, pixelWidth, pixelHeight);
     const zoom = Math.min(pixelWidth / bounds.width, pixelHeight / bounds.height);
-    const offsetX = (pixelWidth - zoom * bounds.width) / 2 - zoom * bounds.x;
-    const offsetY = (pixelHeight - zoom * bounds.height) / 2 - zoom * bounds.y;
+    const offsetX = (pixelWidth - zoom * bounds.width) / 2 - zoom * bounds.min[0];
+    const offsetY = (pixelHeight - zoom * bounds.height) / 2 - zoom * bounds.min[1];
     ctx.setTransform(zoom, 0, 0, zoom, offsetX, offsetY);
     level.draw(ctx, accumulator / stepSeconds);
 
