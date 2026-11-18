@@ -7,6 +7,7 @@ import { collectContacts, gravityAt, stepPhysics, type PhysicsBody } from "./phy
 import {
   advanceAlongSurface,
   supportFromContact,
+  surfaceNormal,
   surfacePose,
   type Support
 } from "./walking";
@@ -24,6 +25,10 @@ const runAcceleration = 240;
 const coastDeceleration = 175;
 const brakeDeceleration = 850;
 const jumpSpeed = 205;
+// Absolute horizontal component of the unit surface tangent.
+const wallEnterX = 0.4;
+const wallExitX = 0.65;
+const minLandingSlide = 20;
 
 type FootAnchor = { edge: GroundEdge; t: number };
 type FootState = { kind: "free" } | { kind: "reaching" | "planted"; anchor: FootAnchor };
@@ -133,7 +138,10 @@ export class Player implements Entity {
     foot: { kind: "free" }
   }));
   support: Support | null = null;
-  private direction = 0;
+  private moveInput = 0;
+  // Signed path direction for Right on a wall; zero uses screen-space steering.
+  private wallRight = 0;
+  private brakingAtTurn = false;
   private jump = false;
   private groundSpeed = 0;
   private readonly previousPosition = vec2.create();
@@ -151,6 +159,7 @@ export class Player implements Entity {
     };
     collectContacts(this.body, ground);
     this.land(ground);
+    this.steerOnLanding();
     this.capturePreviousPose();
   }
 
@@ -172,21 +181,34 @@ export class Player implements Entity {
   }
 
   control(input: InputState) {
-    this.direction =
+    const horizontal =
       Number(input.keysDown.has("ArrowRight")) - Number(input.keysDown.has("ArrowLeft"));
+    // A release and re-press can both happen between physics ticks.
+    if (
+      horizontal !== this.moveInput ||
+      input.keysPressed.has("ArrowLeft") ||
+      input.keysPressed.has("ArrowRight")
+    ) {
+      this.brakingAtTurn = false;
+    }
+    this.moveInput = horizontal;
     this.jump = input.keysPressed.has("Space");
   }
 
   move(ground: GroundPolygon[], dt: number) {
     const body = this.body;
     if (this.support) {
-      const reversing = this.direction * this.groundSpeed < 0;
-      const targetSpeed = reversing ? 0 : this.direction * topSpeed;
-      const rate = reversing
-        ? brakeDeceleration
-        : this.direction
-          ? runAcceleration
-          : coastDeceleration;
+      const normal = surfaceNormal(this.support, body.radius);
+      const tangentX = -normal[1];
+      const drive = this.brakingAtTurn ? 0 : this.moveInput * (this.wallRight || tangentX);
+      const reversing = drive * this.groundSpeed < 0;
+      const targetSpeed = reversing ? 0 : drive * topSpeed;
+      const rate =
+        reversing || this.brakingAtTurn
+          ? brakeDeceleration
+          : drive
+            ? runAcceleration
+            : coastDeceleration;
       this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * dt);
       if (!this.jump) {
         const { support, travel, retainedSpeed } = advanceAlongSurface(
@@ -197,6 +219,20 @@ export class Player implements Entity {
         );
         this.support = support;
         const { pos, normal } = surfacePose(support, body.radius);
+        const nextTangentX = -normal[1];
+        if (!this.wallRight && Math.abs(nextTangentX) <= wallEnterX) {
+          this.wallRight = Math.sign(tangentX);
+        } else if (this.wallRight && Math.abs(nextTangentX) >= wallExitX) {
+          // If the held key would send us back toward the wall, brake until
+          // the player releases or changes direction. Otherwise we'd oscillate.
+          if (
+            Math.sign(nextTangentX) !== this.wallRight &&
+            this.moveInput * nextTangentX * this.groundSpeed < 0
+          ) {
+            this.brakingAtTurn = true;
+          }
+          this.wallRight = 0;
+        }
         vec2.copy(body.pos, pos);
         this.groundSpeed *= retainedSpeed;
         vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
@@ -205,7 +241,6 @@ export class Player implements Entity {
         collectContacts(body, ground);
         return;
       }
-      const { normal } = surfacePose(this.support, body.radius);
       vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
       vec2.scaleAndAdd(body.vel, body.vel, normal, jumpSpeed);
       this.support = null;
@@ -214,10 +249,23 @@ export class Player implements Entity {
     vec2.copy(body.accel, gravityAt(body, ground));
     stepPhysics(body, ground, dt);
     this.land(ground);
-    if (this.support) {
-      const { normal } = surfacePose(this.support, body.radius);
-      this.groundSpeed = -normal[1] * body.vel[0] + normal[0] * body.vel[1];
-    }
+    this.steerOnLanding();
+  }
+
+  private steerOnLanding() {
+    if (!this.support) return;
+    const normal = surfaceNormal(this.support, this.body.radius);
+    this.groundSpeed = -normal[1] * this.body.vel[0] + normal[0] * this.body.vel[1];
+    this.brakingAtTurn = false;
+    this.wallRight = 0;
+    if (Math.abs(normal[1]) > wallEnterX) return;
+    // For a sliding landing the held key continues the slide. With no key
+    // held, assign that motion to the key pointing into the wall.
+    const approachKey = this.moveInput || -Math.sign(normal[0]);
+    this.wallRight =
+      Math.abs(this.groundSpeed) > minLandingSlide
+        ? approachKey * Math.sign(this.groundSpeed)
+        : 1; // With clockwise boundaries this makes the key into the wall climb.
   }
 
   private land(ground: GroundPolygon[]) {

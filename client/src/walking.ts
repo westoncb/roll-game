@@ -28,17 +28,19 @@ function limits(support: Support, radius: number): [number, number] {
   return [trim(turnAt(edge)), edge.length - trim(turnAt(neighbor(edge, 1)))];
 }
 
+export function surfaceNormal(support: Support, radius: number) {
+  if (support.kind === "edge") return support.edge.normal;
+  const start = neighbor(support.edge, -1).normal;
+  const angle = Math.atan2(start[1], start[0]) + support.offset / radius;
+  return vec2.fromValues(Math.cos(angle), Math.sin(angle));
+}
+
 export function surfacePose(support: Support, radius: number) {
   const { edge, offset } = support;
-  if (support.kind === "corner") {
-    const start = neighbor(edge, -1).normal;
-    const angle = Math.atan2(start[1], start[0]) + offset / radius;
-    const normal = vec2.fromValues(Math.cos(angle), Math.sin(angle));
-    return { pos: vec2.scaleAndAdd(vec2.create(), edge.a, normal, radius), normal };
-  }
-  const pos = vec2.scaleAndAdd(vec2.create(), edge.a, edge.tangent, offset);
-  vec2.scaleAndAdd(pos, pos, edge.normal, radius);
-  return { pos, normal: edge.normal };
+  const normal = surfaceNormal(support, radius);
+  const pos = vec2.scaleAndAdd(vec2.create(), edge.a, normal, radius);
+  if (support.kind === "edge") vec2.scaleAndAdd(pos, pos, edge.tangent, offset);
+  return { pos, normal };
 }
 
 export function supportFromContact(
