@@ -20,9 +20,13 @@ const restLength = 23;
 const maxReach = 43;
 const chargedLegLength = 13;
 const legExtensionSpeed = 175;
-const footHeight = 4;
-const halfSole = 3;
-const playerColor = "#e9c680";
+const footHeight = 6;
+const halfSole = 5;
+const shellFill = "#55585c";
+const legFill = "#73767a";
+const metalRim = "#94989c";
+const footFill = "#d63d41";
+const footRim = "#82272d";
 // World units per second, with acceleration rates in units per second squared.
 const topSpeed = 660;
 const runAcceleration = 240;
@@ -157,10 +161,11 @@ export class Player implements Entity {
   private readonly stance = new Drawable2D((ctx) => this.drawLegs(ctx), this.visual);
   private readonly ankles = this.legs.map(() => new Drawable2D(drawFoot, this.stance));
   private readonly shell = new Drawable2D(drawShell, this.stance);
+  private readonly chargeIndicator = new Drawable2D(drawHexagon, this.shell);
 
   constructor(start: vec2, ground: GroundPolygon[]) {
     vec2.copy(this.visual.position, start);
-    this.visual.color = playerColor;
+    this.setChargeColors(0);
     collectContacts(this.body, ground);
     this.land(ground);
     this.steerOnLanding();
@@ -218,15 +223,20 @@ export class Player implements Entity {
   private poseJumpCharge() {
     const charge = this.jumpCharge;
     const time = this.jumpHeldSeconds ?? 0;
-    this.visual.color = charge
-      ? `color-mix(in srgb, ${playerColor}, white ${100 * charge}%)`
-      : playerColor;
+    this.setChargeColors(charge);
     // Free and reaching feet follow this offset until they plant.
     vec2.set(
       this.shell.position,
       2.5 * charge * Math.sin(tau * 11 * time),
       1.5 * charge * Math.sin(tau * 14 * time)
     );
+  }
+
+  private setChargeColors(charge: number) {
+    this.visual.color = charge
+      ? `color-mix(in srgb, ${metalRim}, white ${35 * charge}%)`
+      : metalRim;
+    this.chargeIndicator.color = `rgb(${Math.round(255 * charge)} 0 0)`;
   }
 
   move(ground: GroundPolygon[], dt: number) {
@@ -444,12 +454,17 @@ export class Player implements Entity {
 
   private drawLegs(ctx: CanvasRenderingContext2D) {
     const [x, y] = this.shell.renderPosition;
+    ctx.beginPath();
     for (const ankle of this.ankles) {
-      ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.lineTo(ankle.renderPosition[0], ankle.renderPosition[1]);
-      ctx.stroke();
     }
+    ctx.lineCap = "round";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.lineWidth = 2.25;
+    ctx.strokeStyle = legFill;
+    ctx.stroke();
   }
 }
 
@@ -459,11 +474,32 @@ function drawFoot(ctx: CanvasRenderingContext2D) {
   ctx.lineTo(footHeight, -halfSole);
   ctx.lineTo(footHeight, halfSole);
   ctx.closePath();
+  ctx.fillStyle = footFill;
   ctx.fill();
+  // Keep the border inside the same triangle used to place the sole on terrain.
+  ctx.clip();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = footRim;
+  ctx.stroke();
 }
 
 function drawShell(ctx: CanvasRenderingContext2D) {
   ctx.beginPath();
-  ctx.roundRect(-13, -10, 26, 20, 5);
+  ctx.roundRect(-10.5, -10.5, 21, 21, 1.5);
+  ctx.fillStyle = shellFill;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawHexagon(ctx: CanvasRenderingContext2D) {
+  const radius = 7;
+  ctx.beginPath();
+  ctx.moveTo(radius, 0);
+  for (let i = 1; i < 6; i++) {
+    const angle = (i * tau) / 6;
+    ctx.lineTo(radius * Math.cos(angle), radius * Math.sin(angle));
+  }
+  ctx.closePath();
   ctx.fill();
 }
