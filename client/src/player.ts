@@ -141,7 +141,6 @@ export class Player implements Entity {
   private moveInput = 0;
   // Signed path direction for Right on a wall; zero uses screen-space steering.
   private wallRight = 0;
-  private brakingAtTurn = false;
   private jump = false;
   private groundSpeed = 0;
   private readonly previousPosition = vec2.create();
@@ -181,17 +180,8 @@ export class Player implements Entity {
   }
 
   control(input: InputState) {
-    const horizontal =
+    this.moveInput =
       Number(input.keysDown.has("ArrowRight")) - Number(input.keysDown.has("ArrowLeft"));
-    // A release and re-press can both happen between physics ticks.
-    if (
-      horizontal !== this.moveInput ||
-      input.keysPressed.has("ArrowLeft") ||
-      input.keysPressed.has("ArrowRight")
-    ) {
-      this.brakingAtTurn = false;
-    }
-    this.moveInput = horizontal;
     this.jump = input.keysPressed.has("Space");
   }
 
@@ -200,15 +190,14 @@ export class Player implements Entity {
     if (this.support) {
       const normal = surfaceNormal(this.support, body.radius);
       const tangentX = -normal[1];
-      const drive = this.brakingAtTurn ? 0 : this.moveInput * (this.wallRight || tangentX);
+      const drive = this.moveInput * (this.wallRight || tangentX);
       const reversing = drive * this.groundSpeed < 0;
       const targetSpeed = reversing ? 0 : drive * topSpeed;
-      const rate =
-        reversing || this.brakingAtTurn
-          ? brakeDeceleration
-          : drive
-            ? runAcceleration
-            : coastDeceleration;
+      const rate = reversing
+        ? brakeDeceleration
+        : drive
+          ? runAcceleration
+          : coastDeceleration;
       this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * dt);
       if (!this.jump) {
         const { support, travel, retainedSpeed } = advanceAlongSurface(
@@ -223,14 +212,6 @@ export class Player implements Entity {
         if (!this.wallRight && Math.abs(nextTangentX) <= wallEnterX) {
           this.wallRight = Math.sign(tangentX);
         } else if (this.wallRight && Math.abs(nextTangentX) >= wallExitX) {
-          // If the held key would send us back toward the wall, brake until
-          // the player releases or changes direction. Otherwise we'd oscillate.
-          if (
-            Math.sign(nextTangentX) !== this.wallRight &&
-            this.moveInput * nextTangentX * this.groundSpeed < 0
-          ) {
-            this.brakingAtTurn = true;
-          }
           this.wallRight = 0;
         }
         vec2.copy(body.pos, pos);
@@ -256,7 +237,6 @@ export class Player implements Entity {
     if (!this.support) return;
     const normal = surfaceNormal(this.support, this.body.radius);
     this.groundSpeed = -normal[1] * this.body.vel[0] + normal[0] * this.body.vel[1];
-    this.brakingAtTurn = false;
     this.wallRight = 0;
     if (Math.abs(normal[1]) > wallEnterX) return;
     // For a sliding landing the held key continues the slide. With no key
