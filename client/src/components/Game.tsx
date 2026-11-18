@@ -3,7 +3,7 @@ import { vec2 } from "gl-matrix";
 import { Camera } from "../camera";
 import { updateGame, type GameState } from "../game";
 import { listenForInput, type InputState } from "../input";
-import { loadLevel } from "../level";
+import { loadLevel } from "../level-loader";
 
 export function Game() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -69,7 +69,7 @@ function startGame(host: HTMLElement, canvas: HTMLCanvasElement, game: GameState
 
   const input: InputState = {
     keysDown: new Set(),
-    keysPressed: new Set(),
+    keyChanges: [],
     mousePos: vec2.create()
   };
   const stopInput = listenForInput(canvas, input, camera);
@@ -82,7 +82,7 @@ function startGame(host: HTMLElement, canvas: HTMLCanvasElement, game: GameState
     previousTime = now;
     while (accumulator >= stepSeconds) {
       updateGame(game, input, stepSeconds);
-      input.keysPressed.clear();
+      input.keyChanges.length = 0;
       accumulator -= stepSeconds;
     }
 

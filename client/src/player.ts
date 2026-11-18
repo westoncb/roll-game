@@ -12,12 +12,14 @@ import {
   surfacePose,
   type Support
 } from "./walking";
-import { angleDifference, approach, approachAngle, tau } from "./util";
+import { angleDifference, approach, approachAngle, lerp, tau } from "./util";
 
 const legCount = 10;
 const spacing = tau / legCount;
 const restLength = 23;
 const maxReach = 43;
+const chargedLegLength = 13;
+const legExtensionSpeed = 175;
 const footHeight = 4;
 const halfSole = 3;
 const playerColor = "#e9c680";
@@ -26,7 +28,10 @@ const topSpeed = 660;
 const runAcceleration = 240;
 const coastDeceleration = 175;
 const brakeDeceleration = 850;
-const jumpSpeed = 205;
+const tapJumpSpeed = 205;
+const fullJumpSpeed = 750;
+const fullChargeSeconds = 0.75;
+const chargedSpeedScale = 0.02;
 // Absolute horizontal component of the unit surface tangent.
 const wallEnterX = 0.4;
 const wallExitX = 0.65;
@@ -37,6 +42,7 @@ type FootState = { kind: "free" } | { kind: "reaching" | "planted"; anchor: Foot
 // Angles are in world coordinates. The leg index identifies its part of the rotating body.
 type Pose = { angle: number; length: number; footAngle: number };
 type Leg = Pose & { foot: FootState };
+type LegStance = { center: vec2; restLength: number; minReach: number; maxReach: number };
 
 function ankleAt({ edge, t }: FootAnchor) {
   const ankle = vec2.lerp(vec2.create(), edge.a, edge.b, t);
@@ -91,15 +97,16 @@ function clearSwing(center: vec2, leg: Leg, edges: GroundEdge[]) {
 }
 
 function reachable(
-  center: vec2,
+  stance: LegStance,
   anchor: FootAnchor,
   restAngle: number,
   nearby: GroundEdge[]
 ) {
+  const { center } = stance;
   const pose = plantedPose(center, anchor);
   if (
-    pose.length > maxReach ||
-    pose.length < 14 ||
+    pose.length > stance.maxReach ||
+    pose.length < stance.minReach ||
     Math.abs(angleDifference(restAngle, pose.angle)) >= spacing * 0.49
   )
     return false;
@@ -141,16 +148,19 @@ export class Player implements Entity {
   private moveInput = 0;
   // Signed path direction for Right on a wall; zero uses screen-space steering.
   private wallRight = 0;
-  private jump = false;
+  private jumpHeldSeconds: number | null = null;
+  private launchCharge: number | null = null;
   private groundSpeed = 0;
-  readonly visual = new Drawable2D((ctx) => this.drawLegs(ctx));
+  readonly visual = new Drawable2D();
   readonly body = new PhysicsBody(this.visual.position, 28);
-  // The root follows the center. Only the shell rolls, so ankle offsets use world axes.
-  private readonly ankles = this.legs.map(() => new Drawable2D(drawFoot, this.visual));
-  private readonly shell = new Drawable2D(drawShell, this.visual);
+  // The stance can crouch relative to the collider. Only the shell rolls.
+  private readonly stance = new Drawable2D((ctx) => this.drawLegs(ctx), this.visual);
+  private readonly ankles = this.legs.map(() => new Drawable2D(drawFoot, this.stance));
+  private readonly shell = new Drawable2D(drawShell, this.stance);
 
   constructor(start: vec2, ground: GroundPolygon[]) {
     vec2.copy(this.visual.position, start);
+    this.visual.color = playerColor;
     collectContacts(this.body, ground);
     this.land(ground);
     this.steerOnLanding();
@@ -169,10 +179,51 @@ export class Player implements Entity {
     }
   }
 
-  control(input: InputState) {
+  private get jumpCharge() {
+    return Math.min(1, (this.jumpHeldSeconds ?? 0) / fullChargeSeconds);
+  }
+
+  private get strideScale() {
+    return lerp(1, chargedSpeedScale, this.launchCharge ?? this.jumpCharge);
+  }
+
+  control(input: InputState, dt: number) {
     this.moveInput =
       Number(input.keysDown.has("ArrowRight")) - Number(input.keysDown.has("ArrowLeft"));
-    this.jump = input.keysPressed.has("Space");
+    const previousStride = this.strideScale;
+    this.launchCharge = null;
+    if (this.support) {
+      for (const change of input.keyChanges) {
+        if (change.code !== "Space") continue;
+        if (change.type === "press") {
+          this.jumpHeldSeconds = 0;
+        } else if (this.jumpHeldSeconds !== null) {
+          this.launchCharge = this.jumpCharge;
+          this.jumpHeldSeconds = null;
+          break;
+        }
+      }
+    }
+    if (!this.support || !input.keysDown.has("Space")) this.jumpHeldSeconds = null;
+    else if (this.jumpHeldSeconds !== null) this.jumpHeldSeconds += dt;
+    // Shortening a stride sheds the same fraction of the player's existing speed.
+    const stride = this.strideScale;
+    if (stride < previousStride) this.groundSpeed *= stride / previousStride;
+    this.poseJumpCharge();
+  }
+
+  private poseJumpCharge() {
+    const charge = this.jumpCharge;
+    const time = this.jumpHeldSeconds ?? 0;
+    this.visual.color = charge
+      ? `color-mix(in srgb, ${playerColor}, white ${100 * charge}%)`
+      : playerColor;
+    // Offset just the shell. Leg roots follow it while planted ankles stay fixed.
+    vec2.set(
+      this.shell.position,
+      2.5 * charge * Math.sin(tau * 11 * time),
+      1.5 * charge * Math.sin(tau * 14 * time)
+    );
   }
 
   move(ground: GroundPolygon[], dt: number) {
@@ -182,14 +233,15 @@ export class Player implements Entity {
       const tangentX = -normal[1];
       const drive = this.moveInput * (this.wallRight || tangentX);
       const reversing = drive * this.groundSpeed < 0;
-      const targetSpeed = reversing ? 0 : drive * topSpeed;
+      const stride = this.strideScale;
+      const targetSpeed = reversing ? 0 : drive * topSpeed * stride;
       const rate = reversing
         ? brakeDeceleration
         : drive
           ? runAcceleration
           : coastDeceleration;
-      this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * dt);
-      if (!this.jump) {
+      this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * stride * dt);
+      if (this.launchCharge === null) {
         const { support, travel, retainedSpeed } = advanceAlongSurface(
           this.support,
           this.groundSpeed * dt,
@@ -213,7 +265,8 @@ export class Player implements Entity {
         return;
       }
       vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
-      vec2.scaleAndAdd(body.vel, body.vel, normal, jumpSpeed);
+      const launchSpeed = lerp(tapJumpSpeed, fullJumpSpeed, this.launchCharge);
+      vec2.scaleAndAdd(body.vel, body.vel, normal, launchSpeed);
       this.support = null;
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;
@@ -257,11 +310,34 @@ export class Player implements Entity {
   }
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
-    this.updateFeet(dt, ground);
+    const stance = this.updateStance(dt);
+    this.updateFeet(dt, ground, stance);
     this.poseAnkles();
   }
 
+  private updateStance(dt: number): LegStance {
+    const depth = (restLength - chargedLegLength) * this.jumpCharge;
+    const normal =
+      depth > 0 && this.support ? surfaceNormal(this.support, this.body.radius) : [0, 0];
+    const offset = this.stance.position;
+    const step = legExtensionSpeed * dt;
+    vec2.set(
+      offset,
+      approach(offset[0], -normal[0] * depth, step),
+      approach(offset[1], -normal[1] * depth, step)
+    );
+    const length = restLength - vec2.length(offset);
+    const scale = length / restLength;
+    return {
+      center: vec2.add(vec2.create(), this.body.pos, offset),
+      restLength: length,
+      minReach: 14 * scale,
+      maxReach: maxReach * scale
+    };
+  }
+
   private findFoothold(
+    stance: LegStance,
     aim: number,
     restAngle: number,
     edges: GroundEdge[]
@@ -273,7 +349,7 @@ export class Player implements Entity {
       if (edge.length <= 2 * halfSole) continue;
       const toward = -vec2.dot(dir, edge.normal);
       if (toward <= 0) continue;
-      const fromEdge = vec2.subtract(vec2.create(), this.body.pos, edge.a);
+      const fromEdge = vec2.subtract(vec2.create(), stance.center, edge.a);
       const reach = (vec2.dot(fromEdge, edge.normal) - footHeight) / toward;
       if (reach <= 0) continue;
       const along = vec2.dot(fromEdge, edge.tangent) + reach * vec2.dot(dir, edge.tangent);
@@ -281,7 +357,7 @@ export class Player implements Entity {
         edge,
         t: Math.max(halfSole, Math.min(edge.length - halfSole, along)) / edge.length
       };
-      if (!reachable(this.body.pos, anchor, restAngle, edges)) continue;
+      if (!reachable(stance, anchor, restAngle, edges)) continue;
       // Reserve sole space for both planted and approaching feet.
       if (
         this.legs.some(
@@ -292,16 +368,16 @@ export class Player implements Entity {
         )
       )
         continue;
-      const pose = plantedPose(this.body.pos, anchor);
+      const pose = plantedPose(stance.center, anchor);
       // Leave margin on acquisition so a moving leg can finish its step.
       if (
-        pose.length > maxReach - 2 ||
+        pose.length > stance.maxReach - 2 ||
         Math.abs(angleDifference(restAngle, pose.angle)) > spacing * 0.42
       )
         continue;
       const score =
-        Math.abs(angleDifference(aim, pose.angle)) * maxReach +
-        Math.abs(pose.length - restLength);
+        Math.abs(angleDifference(aim, pose.angle)) * stance.maxReach +
+        Math.abs(pose.length - stance.restLength);
       if (score < bestScore) {
         bestScore = score;
         best = anchor;
@@ -310,19 +386,23 @@ export class Player implements Entity {
     return best;
   }
 
-  private updateFeet(dt: number, ground: GroundPolygon[]) {
+  private updateFeet(dt: number, ground: GroundPolygon[], stance: LegStance) {
     const speed = Math.abs(this.groundSpeed);
     const rollRate = speed / this.body.radius;
-    const edges = nearbyEdges(this.body.pos, maxReach + footHeight + halfSole, ground);
+    const edges = nearbyEdges(
+      stance.center,
+      stance.maxReach + footHeight + halfSole,
+      ground
+    );
     for (const [i, leg] of this.legs.entries()) {
       if (leg.foot.kind === "free") continue;
       if (
         !this.support ||
-        !reachable(this.body.pos, leg.foot.anchor, this.shell.rotation + i * spacing, edges)
+        !reachable(stance, leg.foot.anchor, this.shell.rotation + i * spacing, edges)
       ) {
         leg.foot = { kind: "free" };
       } else if (leg.foot.kind === "planted") {
-        Object.assign(leg, plantedPose(this.body.pos, leg.foot.anchor));
+        Object.assign(leg, plantedPose(stance.center, leg.foot.anchor));
       }
     }
     const targets = targetAngles(this.legs, this.shell.rotation);
@@ -330,6 +410,7 @@ export class Player implements Entity {
       if (leg.foot.kind === "planted") continue;
       if (leg.foot.kind === "free" && this.support) {
         const anchor = this.findFoothold(
+          stance,
           targets[i],
           this.shell.rotation + i * spacing,
           edges
@@ -338,10 +419,10 @@ export class Player implements Entity {
       }
       const target =
         leg.foot.kind === "reaching"
-          ? plantedPose(this.body.pos, leg.foot.anchor)
-          : { angle: targets[i], length: restLength, footAngle: targets[i] };
+          ? plantedPose(stance.center, leg.foot.anchor)
+          : { angle: targets[i], length: stance.restLength, footAngle: targets[i] };
       leg.angle = approachAngle(leg.angle, target.angle, (14 + rollRate) * dt);
-      leg.length = approach(leg.length, target.length, (175 + speed) * dt);
+      leg.length = approach(leg.length, target.length, (legExtensionSpeed + speed) * dt);
       leg.footAngle = approachAngle(leg.footAngle, target.footAngle, (15 + rollRate) * dt);
       if (
         leg.foot.kind === "reaching" &&
@@ -351,16 +432,16 @@ export class Player implements Entity {
       ) {
         leg.foot = { kind: "planted", anchor: leg.foot.anchor };
       } else {
-        clearSwing(this.body.pos, leg, edges);
+        clearSwing(stance.center, leg, edges);
       }
     }
   }
 
   private drawLegs(ctx: CanvasRenderingContext2D) {
-    ctx.strokeStyle = playerColor;
+    const [x, y] = this.shell.renderPosition;
     for (const ankle of this.ankles) {
       ctx.beginPath();
-      ctx.moveTo(0, 0);
+      ctx.moveTo(x, y);
       ctx.lineTo(ankle.renderPosition[0], ankle.renderPosition[1]);
       ctx.stroke();
     }
@@ -368,7 +449,6 @@ export class Player implements Entity {
 }
 
 function drawFoot(ctx: CanvasRenderingContext2D) {
-  ctx.fillStyle = playerColor;
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.lineTo(footHeight, -halfSole);
@@ -378,7 +458,6 @@ function drawFoot(ctx: CanvasRenderingContext2D) {
 }
 
 function drawShell(ctx: CanvasRenderingContext2D) {
-  ctx.fillStyle = playerColor;
   ctx.beginPath();
   ctx.roundRect(-13, -10, 26, 20, 5);
   ctx.fill();

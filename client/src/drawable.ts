@@ -7,6 +7,8 @@ type Draw = (ctx: CanvasRenderingContext2D) => void;
 /** Draws in local coordinates. Children paint after their parent, in creation order. */
 export class Drawable2D extends Transform2D {
   declare readonly parent: Drawable2D | null;
+  /** Default fill and stroke for this drawable and its descendants. */
+  color?: string;
   private readonly children: Drawable2D[] = [];
   private previous?: Transform2D;
   private readonly sampledPosition = vec2.create();
@@ -24,6 +26,10 @@ export class Drawable2D extends Transform2D {
   /** Origin in parent coordinates for the frame being drawn. */
   get renderPosition(): ReadonlyVec2 {
     return this.sampledPosition;
+  }
+
+  private get paintColor(): string | undefined {
+    return this.color ?? this.parent?.paintColor;
   }
 
   /** Start a fixed tick, or snap the subtree to its new pose after a teleport. */
@@ -59,6 +65,8 @@ export class Drawable2D extends Transform2D {
     if (this.draw) {
       ctx.save();
       applyMatrix(ctx, this.sampledWorld);
+      const color = this.paintColor;
+      if (color !== undefined) ctx.fillStyle = ctx.strokeStyle = color;
       this.draw(ctx);
       ctx.restore();
     }

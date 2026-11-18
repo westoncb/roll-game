@@ -4,7 +4,8 @@ import type { Camera } from "./camera";
 
 export type InputState = {
   keysDown: Set<string>;
-  keysPressed: Set<string>;
+  /** Transitions since the last fixed tick, including taps between ticks. */
+  keyChanges: { code: string; type: "press" | "release" }[];
   mousePos: vec2;
 };
 
@@ -23,16 +24,24 @@ export function listenForInput(
       if (!gameKeys.has(event.code) || event.metaKey || event.ctrlKey || event.altKey)
         return;
       event.preventDefault();
-      if (!event.repeat && !input.keysDown.has(event.code))
-        input.keysPressed.add(event.code);
+      if (event.repeat || input.keysDown.has(event.code)) return;
       input.keysDown.add(event.code);
+      input.keyChanges.push({ code: event.code, type: "press" });
     },
     options
   );
-  canvas.addEventListener("keyup", (event) => input.keysDown.delete(event.code), options);
+  canvas.addEventListener(
+    "keyup",
+    (event) => {
+      if (input.keysDown.delete(event.code)) {
+        input.keyChanges.push({ code: event.code, type: "release" });
+      }
+    },
+    options
+  );
   const releaseKeys = () => {
     input.keysDown.clear();
-    input.keysPressed.clear();
+    input.keyChanges.length = 0;
   };
   canvas.addEventListener("blur", releaseKeys, options);
   window.addEventListener("blur", releaseKeys, options);
