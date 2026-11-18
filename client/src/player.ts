@@ -18,7 +18,11 @@ const restLength = 23;
 const maxReach = 43;
 const footHeight = 4;
 const halfSole = 3;
-const walkSpeed = 98;
+// World units per second, with acceleration rates in units per second squared.
+const topSpeed = 660;
+const runAcceleration = 240;
+const coastDeceleration = 175;
+const brakeDeceleration = 850;
 const jumpSpeed = 205;
 
 type FootAnchor = { edge: GroundEdge; t: number };
@@ -131,6 +135,7 @@ export class Player implements Entity {
   support: Support | null = null;
   private direction = 0;
   private jump = false;
+  private groundSpeed = 0;
 
   constructor(start: vec2, ground: GroundPolygon[]) {
     this.body = {
@@ -153,31 +158,44 @@ export class Player implements Entity {
   move(ground: GroundPolygon[], dt: number) {
     const body = this.body;
     if (this.support) {
-      const speed = this.direction * walkSpeed;
+      const reversing = this.direction * this.groundSpeed < 0;
+      const targetSpeed = reversing ? 0 : this.direction * topSpeed;
+      const rate = reversing
+        ? brakeDeceleration
+        : this.direction
+          ? runAcceleration
+          : coastDeceleration;
+      this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * dt);
       if (!this.jump) {
-        const { support, travel } = advanceAlongSurface(
+        const { support, travel, retainedSpeed } = advanceAlongSurface(
           this.support,
-          speed * dt,
+          this.groundSpeed * dt,
           body.radius,
           ground
         );
         this.support = support;
         const { pos, normal } = surfacePose(support, body.radius);
         vec2.copy(body.pos, pos);
-        vec2.set(body.vel, (-normal[1] * travel) / dt, (normal[0] * travel) / dt);
+        this.groundSpeed *= retainedSpeed;
+        vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
         vec2.zero(body.accel);
         this.angle += travel / body.radius;
         collectContacts(body, ground);
         return;
       }
       const { normal } = surfacePose(this.support, body.radius);
-      vec2.set(body.vel, -normal[1] * speed, normal[0] * speed);
+      vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
       vec2.scaleAndAdd(body.vel, body.vel, normal, jumpSpeed);
       this.support = null;
     }
+    this.angle += (this.groundSpeed * dt) / body.radius;
     vec2.copy(body.accel, gravityAt(body, ground));
     stepPhysics(body, ground, dt);
     this.land(ground);
+    if (this.support) {
+      const { normal } = surfacePose(this.support, body.radius);
+      this.groundSpeed = -normal[1] * body.vel[0] + normal[0] * body.vel[1];
+    }
   }
 
   private land(ground: GroundPolygon[]) {
@@ -252,6 +270,8 @@ export class Player implements Entity {
   }
 
   private updateFeet(dt: number, ground: GroundPolygon[]) {
+    const speed = Math.abs(this.groundSpeed);
+    const rollRate = speed / this.body.radius;
     const edges = nearbyEdges(this.body.pos, maxReach + footHeight + halfSole, ground);
     for (const [i, leg] of this.legs.entries()) {
       if (leg.foot.kind === "free") continue;
@@ -275,9 +295,9 @@ export class Player implements Entity {
         leg.foot.kind === "reaching"
           ? plantedPose(this.body.pos, leg.foot.anchor)
           : { angle: targets[i], length: restLength, footAngle: targets[i] };
-      leg.angle = approachAngle(leg.angle, target.angle, 14 * dt);
-      leg.length = approach(leg.length, target.length, 175 * dt);
-      leg.footAngle = approachAngle(leg.footAngle, target.footAngle, 15 * dt);
+      leg.angle = approachAngle(leg.angle, target.angle, (14 + rollRate) * dt);
+      leg.length = approach(leg.length, target.length, (175 + speed) * dt);
+      leg.footAngle = approachAngle(leg.footAngle, target.footAngle, (15 + rollRate) * dt);
       if (
         leg.foot.kind === "reaching" &&
         Math.abs(angleDifference(leg.angle, target.angle)) < 0.0001 &&

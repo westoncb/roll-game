@@ -90,21 +90,27 @@ export function advanceAlongSurface(
   let support = initial;
   const direction = Math.sign(distance);
   let remaining = Math.abs(distance);
+  let travelled = 0;
+  let retainedSpeed = 1;
+  const clearanceTolerance = 0.001;
   // A fixed tick usually stays on one feature. The bound also handles pinched passages.
   for (let transitions = 0; remaining > 0.000001 && transitions < 32; transitions++) {
     const [start, end] = limits(support, radius);
-    if (end < start) break;
+    if (end < start) {
+      retainedSpeed = 0;
+      break;
+    }
     const available = direction > 0 ? end - support.offset : support.offset - start;
     const step = Math.max(0, Math.min(remaining, available));
     const at = (travel: number): Support => ({
       ...support,
       offset: support.offset + direction * travel
     });
-    const next = at(step);
-    const pos = surfacePose(next, radius).pos;
+    let reached = at(step);
+    const pos = surfacePose(reached, radius).pos;
     // Another island or a non-adjacent wall can interrupt this feature.
     const obstruction = ground.find(
-      (p) => nearestBoundary(pos, p).distance < radius - 0.0001
+      (p) => nearestBoundary(pos, p).distance < radius - clearanceTolerance
     );
     if (obstruction) {
       let low = 0,
@@ -112,21 +118,36 @@ export function advanceAlongSurface(
       for (let i = 0; i < 16; i++) {
         const mid = (low + high) / 2;
         const sample = surfacePose(at(mid), radius);
-        if (nearestBoundary(sample.pos, obstruction).distance < radius - 0.0001) high = mid;
+        if (nearestBoundary(sample.pos, obstruction).distance < radius - clearanceTolerance)
+          high = mid;
         else low = mid;
       }
       const hit = nearestBoundary(surfacePose(at(high), radius).pos, obstruction);
       remaining -= low;
+      travelled += low;
+      reached = at(low);
       const transfer = supportFromContact(hit, radius);
       if (transfer.edge === support.edge && transfer.kind === support.kind) {
-        support = at(low);
+        support = reached;
+        retainedSpeed = 0;
         break;
       }
       support = transfer;
     } else {
       remaining -= step;
-      support = remaining > 0.000001 ? adjacent(next, direction, radius) : next;
+      travelled += step;
+      support = reached;
+      if (remaining <= 0.000001) break;
+      support = adjacent(reached, direction, radius);
     }
+    // Project incoming velocity onto the outgoing tangent at the actual join.
+    // Rounded corners have a continuous tangent; an inside right angle costs all speed.
+    const incoming = surfacePose(reached, radius).normal;
+    const outgoing = surfacePose(support, radius).normal;
+    const alignment = Math.max(0, Math.min(1, vec2.dot(incoming, outgoing)));
+    retainedSpeed *= alignment;
+    remaining *= alignment;
   }
-  return { support, travel: distance - direction * remaining };
+  if (remaining > 0.000001) retainedSpeed = 0;
+  return { support, travel: direction * travelled, retainedSpeed };
 }

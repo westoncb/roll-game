@@ -16,6 +16,7 @@ export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
   };
   const { width, height } = canvas.getBoundingClientRect();
   const canvasSize = vec2.fromValues(width, height);
+  const viewOrigin = vec2.create();
   const resizeObserver = new ResizeObserver(([entry]) => {
     vec2.set(canvasSize, entry.contentRect.width, entry.contentRect.height);
   });
@@ -53,7 +54,14 @@ export function startGame(canvas: HTMLCanvasElement, level: Level): () => void {
     }
     ctx.fillStyle = "#112233";
     ctx.fillRect(0, 0, width, height);
+    // Allow movement in the middle of the view before scrolling the world.
+    const [x, y] = level.player.body.pos;
+    viewOrigin[0] = Math.max(x - width * 0.65, Math.min(viewOrigin[0], x - width * 0.35));
+    viewOrigin[1] = Math.max(y - height * 0.65, Math.min(viewOrigin[1], y - height * 0.35));
+    ctx.save();
+    ctx.translate(-viewOrigin[0], -viewOrigin[1]);
     level.draw(ctx);
+    ctx.restore();
 
     frameId = requestAnimationFrame(frame);
   };

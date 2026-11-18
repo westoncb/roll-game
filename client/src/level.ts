@@ -26,6 +26,7 @@ function isGroundData(value: unknown): value is GroundData {
 }
 
 export class Level {
+  readonly player: Player;
   readonly ground: GroundPolygon[];
   readonly entities: Entity[];
 
@@ -37,7 +38,8 @@ export class Level {
           polygon.gravityScale ?? 1
         )
     );
-    this.entities = [new Player(vec2.fromValues(...data.playerStart), this.ground)];
+    this.player = new Player(vec2.fromValues(...data.playerStart), this.ground);
+    this.entities = [this.player];
   }
 
   update(input: InputState, dt: number) {
