@@ -16,7 +16,7 @@ export type CastBeam = (
 const gun = playerConfig.gun;
 type Shot =
   | { kind: "idle" }
-  | { kind: "aiming"; horizontalInput: number; turn: number }
+  | { kind: "aiming"; rightTurn: 1 | -1 }
   | { kind: "extending"; direction: vec2; castFrom: vec2 }
   | { kind: "pulling"; hit: TerrainHit; latchLength: number; lastDistance: number }
   | { kind: "retracting"; remaining: number };
@@ -59,19 +59,14 @@ export class PlayerGun {
   beginAim(direction: ReadonlyVec2) {
     if (this.shot.kind !== "idle") return;
     this.pivot.setOrientation(Math.atan2(direction[1], direction[0]));
-    this.shot = { kind: "aiming", horizontalInput: 0, turn: 0 };
+    // Right turns clockwise from an upward or horizontal start, counterclockwise from below.
+    this.shot = { kind: "aiming", rightTurn: direction[1] > 1e-6 ? -1 : 1 };
   }
 
   aim(horizontalInput: number, dt: number) {
     const shot = this.shot;
     if (shot.kind !== "aiming") return;
-    if (horizontalInput !== shot.horizontalInput) {
-      // Start toward the pressed side of the screen. Keep the turn through horizontal
-      // so a held arrow can take the barrel all the way around.
-      shot.horizontalInput = horizontalInput;
-      shot.turn = Math.sin(this.pivot.rotation) > 1e-6 ? -horizontalInput : horizontalInput;
-    }
-    this.pivot.rotation += shot.turn * gun.aimSpeed * dt;
+    this.pivot.rotation += horizontalInput * shot.rightTurn * gun.aimSpeed * dt;
   }
 
   fire() {
