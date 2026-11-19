@@ -2,19 +2,22 @@ import { vec2, type ReadonlyVec2 } from "gl-matrix";
 import type { TerrainHit } from "./collision";
 import { Drawable2D } from "./drawable";
 import { playerConfig } from "./player-config";
-import { approach, lerp } from "./util";
+import { approach } from "./util";
 
 // The level identifies the first target; only a clingable hit supplies a movement anchor.
 export type BeamHit =
   | ({ kind: "clingable" } & TerrainHit)
   | { kind: "damageable"; point: vec2 };
-export type CastBeam = (from: vec2, to: vec2) => BeamHit | null;
+export type CastBeam = (
+  from: vec2,
+  to: vec2
+) => BeamHit | { kind: "miss"; point: vec2 } | null;
 
 const gun = playerConfig.gun;
 type Shot =
   | { kind: "idle" }
-  | { kind: "charging"; elapsed: number }
-  | { kind: "extending"; direction: vec2; remaining: number; castFrom: vec2 }
+  | { kind: "aiming" }
+  | { kind: "extending"; direction: vec2; castFrom: vec2 }
   | { kind: "pulling"; hit: TerrainHit; latchLength: number }
   | { kind: "retracting"; remaining: number };
 
@@ -37,12 +40,6 @@ export class PlayerGun {
   get phase() {
     return this.shot.kind;
   }
-  get chargeSeconds() {
-    return this.shot.kind === "charging" ? this.shot.elapsed : 0;
-  }
-  get charge() {
-    return Math.min(1, this.chargeSeconds / gun.fullChargeSeconds);
-  }
   get anchor() {
     return this.shot.kind === "pulling" ? this.shot.hit : null;
   }
@@ -59,21 +56,19 @@ export class PlayerGun {
     return vec2.scale(toAnchor, toAnchor, gun.pullSpeed / distance);
   }
 
-  beginCharge(direction: ReadonlyVec2) {
+  beginAim(direction: ReadonlyVec2) {
     if (this.shot.kind !== "idle") return;
     this.pivot.setOrientation(Math.atan2(direction[1], direction[0]));
-    this.shot = { kind: "charging", elapsed: 0 };
+    this.shot = { kind: "aiming" };
   }
 
   aim(turn: number, dt: number) {
-    if (this.shot.kind !== "charging") return;
-    this.shot.elapsed += dt;
+    if (this.shot.kind !== "aiming") return;
     this.pivot.rotation += turn * gun.aimSpeed * dt;
   }
 
   fire() {
-    if (this.shot.kind !== "charging") return;
-    const remaining = lerp(gun.minRange, gun.maxRange, this.charge);
+    if (this.shot.kind !== "aiming") return;
     // A tap still fires from the end of a deployed barrel.
     this.muzzle.position[0] = gun.barrelLength;
     this.muzzle.localToWorld([0, 0], this.tip);
@@ -82,7 +77,6 @@ export class PlayerGun {
     this.shot = {
       kind: "extending",
       direction: vec2.normalize(direction, direction),
-      remaining,
       castFrom: mount
     };
   }
@@ -100,23 +94,20 @@ export class PlayerGun {
     );
     const muzzle = this.muzzle.localToWorld([0, 0]);
     if (shot.kind === "extending") {
-      const travel = Math.min(shot.remaining, gun.extensionSpeed * dt);
+      const travel = gun.extensionSpeed * dt;
       const end = vec2.scaleAndAdd(vec2.create(), this.tip, shot.direction, travel);
       // On release this includes the mount-to-muzzle segment.
-      const hit = cast(shot.castFrom, end);
-      if (hit) {
-        vec2.copy(this.tip, hit.point);
+      const result = cast(shot.castFrom, end);
+      if (result) {
+        vec2.copy(this.tip, result.point);
         const length = vec2.distance(muzzle, this.tip);
         this.shot =
-          hit.kind === "clingable"
-            ? { kind: "pulling", hit, latchLength: length }
+          result.kind === "clingable"
+            ? { kind: "pulling", hit: result, latchLength: length }
             : { kind: "retracting", remaining: length };
       } else {
         vec2.copy(this.tip, end);
         vec2.copy(shot.castFrom, end);
-        shot.remaining -= travel;
-        if (shot.remaining <= 0)
-          this.shot = { kind: "retracting", remaining: vec2.distance(muzzle, end) };
       }
     } else if (shot.kind === "retracting") {
       const distance = vec2.distance(this.tip, muzzle);
@@ -141,7 +132,7 @@ export class PlayerGun {
   }
 
   private drawBeam(ctx: CanvasRenderingContext2D) {
-    if (this.shot.kind === "idle" || this.shot.kind === "charging") return;
+    if (this.shot.kind === "idle" || this.shot.kind === "aiming") return;
     // Draw in the tip's sampled frame. The player root translates in world axes.
     const dx = this.muzzle.renderWorldMatrix[4] - this.tipNode.renderWorldMatrix[4];
     const dy = this.muzzle.renderWorldMatrix[5] - this.tipNode.renderWorldMatrix[5];

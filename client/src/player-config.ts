@@ -55,10 +55,7 @@ export const playerConfig = {
     shakeHzY: 14
   },
   gun: {
-    fullChargeSeconds: 0.8,
     aimSpeed: 2.7,
-    minRange: 190,
-    maxRange: 720,
     extensionSpeed: 900,
     retractSpeed: 1150,
     pullSpeed: 710,

@@ -34,13 +34,30 @@ export class Level {
           polygon.gravityScale ?? 1
         )
     );
+    const worldMin = vec2.create();
+    const worldMax = vec2.fromValues(data.width, data.height);
+    for (const polygon of this.ground) {
+      for (const vertex of polygon.vertices) {
+        vec2.min(worldMin, worldMin, vertex);
+        vec2.max(worldMax, worldMax, vertex);
+      }
+    }
     this.player = new Player(
       vec2.fromValues(...data.playerStart),
       this.ground,
       this.particles,
       (from, to) => {
         const hit = castSegment(from, to, this.ground);
-        return hit && { kind: "clingable", ...hit };
+        if (hit) return { kind: "clingable", ...hit };
+        // A shot fired from outside can still travel back into the level.
+        for (const axis of [0, 1]) {
+          if (
+            (to[axis] < worldMin[axis] && to[axis] <= from[axis]) ||
+            (to[axis] > worldMax[axis] && to[axis] >= from[axis])
+          )
+            return { kind: "miss", point: to };
+        }
+        return null;
       }
     );
     this.entities = [this.player];

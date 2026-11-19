@@ -57,6 +57,12 @@ type Leg = Pose & {
   footScale: number;
 };
 
+// Place a tucked ankle on the rim of the square shell along its own spoke.
+function tuckedLegLength(shellAngle: number) {
+  const side = Math.max(Math.abs(Math.cos(shellAngle)), Math.abs(Math.sin(shellAngle)));
+  return (shell.size + shell.borderWidth) / (2 * side);
+}
+
 function stepPose(from: Pose, to: Pose, progress: number, lift: number): Pose {
   const blend = progress * progress * (3 - 2 * progress);
   return {
@@ -205,7 +211,7 @@ export class Player implements Entity {
       if (change.code === "KeyF") {
         if (change.type === "release") this.gun.fire();
         else if (this.jumpHeldSeconds === null && this.launchCharge === null)
-          this.gun.beginCharge(
+          this.gun.beginAim(
             this.support ? this.pushOffDirection(this.support) : this.lastJumpDirection
           );
       } else if (change.code === "Space" && this.support && this.gun.phase === "idle") {
@@ -216,7 +222,7 @@ export class Player implements Entity {
         }
       }
     }
-    if (this.gun.phase === "charging") {
+    if (this.gun.phase === "aiming") {
       // Blur clears held keys without issuing a fire command.
       if (!input.keysDown.has("KeyF")) this.gun.finish();
       else {
@@ -229,10 +235,7 @@ export class Player implements Entity {
     // Shortening a stride sheds the same fraction of the player's existing speed.
     const stride = this.strideScale;
     if (stride < previousStride) this.groundSpeed *= stride / previousStride;
-    this.poseChargeVisuals(
-      this.jumpCharge() || this.gun.charge,
-      this.jumpHeldSeconds ?? this.gun.chargeSeconds
-    );
+    this.poseChargeVisuals(this.jumpCharge(), this.jumpHeldSeconds ?? 0);
   }
 
   private poseChargeVisuals(charge: number, time: number) {
@@ -285,7 +288,7 @@ export class Player implements Entity {
       const stride = this.strideScale;
       const targetSpeed = reversing ? 0 : drive * movement.topSpeed * stride;
       const rate =
-        reversing || this.gun.phase === "charging"
+        reversing || this.gun.phase === "aiming"
           ? movement.brakeDeceleration
           : drive
             ? movement.runAcceleration
@@ -451,7 +454,7 @@ export class Player implements Entity {
       };
     });
     const plan =
-      this.gun.phase === "charging"
+      this.gun.phase === "aiming"
         ? planGrips(edges, stance, legs)
         : planFootholds(edges, requests, held);
     for (const [i, leg] of this.legs.entries()) {
@@ -490,7 +493,6 @@ export class Player implements Entity {
   private updateFeet(dt: number, ground: GroundPolygon[]) {
     const speed = Math.abs(this.groundSpeed);
     const rollRate = speed / this.body.radius;
-    const retractLegs = this.gun.phase === "charging";
     // Faster steps leave less time to open the foot before its anchor passes.
     const scaleStep =
       (1 - foot.foldedScale) * (1 / foot.unfoldSeconds + rollRate / legSpacing) * dt;
@@ -513,17 +515,18 @@ export class Player implements Entity {
       const step = leg.step;
       const progress = step ? 1 - step.remaining / foot.stepSeconds : 1;
       const lift = step ? Math.sin(Math.PI * progress) : 0;
-      const scale = retractLegs
-        ? 0
-        : leg.foot.kind === "reaching"
-          ? lerp(1, foot.foldedScale, lift)
-          : foot.foldedScale;
+      const scale =
+        leg.foot.kind === "reaching" ? lerp(1, foot.foldedScale, lift) : foot.foldedScale;
       leg.footScale = approach(leg.footScale, scale, scaleStep);
       let target: Pose;
       if (leg.foot.kind === "free") {
         const offset = settleSpacing(leg.foot, offsets[i], dt);
         const angle = this.shell.rotation + i * legSpacing + offset;
-        target = { angle, length: retractLegs ? 0 : stance.restLength, footAngle: angle };
+        const length =
+          this.gun.phase === "aiming"
+            ? tuckedLegLength(angle - this.shell.rotation)
+            : stance.restLength;
+        target = { angle, length, footAngle: angle };
       } else {
         target = plantedPose(stance.center, leg.foot.anchor);
       }
