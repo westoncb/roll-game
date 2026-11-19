@@ -4,6 +4,7 @@ import { sampleGravity } from "./physics";
 import { lerp } from "./util";
 
 const density = 0.65;
+const opacity = 0.56;
 const sampleSeconds = 0.08;
 const maxSpeed = 68;
 const tailSeconds = 0.27;
@@ -82,7 +83,7 @@ export class GravityField {
       const x = lerp(from.x, to.x, head - i);
       const y = lerp(from.y, to.y, head - i);
       const strength = lerp(from.strength, to.strength, head - i);
-      const fade = Math.min(1, progress / 0.13, (1 - progress) / 0.18);
+      const fade = opacity * Math.min(1, progress / 0.13, (1 - progress) / 0.18);
       ctx.globalAlpha = fade * (0.22 + 0.43 * strength);
       ctx.lineWidth = 1.35 + 0.65 * strength;
       ctx.beginPath();
