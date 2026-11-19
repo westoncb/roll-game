@@ -4,10 +4,6 @@ import { Drawable2D } from "./drawable";
 import type { Entity } from "./entity";
 import {
   findFoothold,
-  foldedFootScale,
-  foldedHalfSole,
-  footHeight,
-  halfSole,
   padHalfWidth,
   plantedPose,
   poseFits,
@@ -20,6 +16,17 @@ import type { GroundEdge, GroundPolygon } from "./ground";
 import type { InputState } from "./input";
 import { collectContacts, gravityAt, stepPhysics, PhysicsBody } from "./physics";
 import {
+  foldedHalfSole,
+  halfSole,
+  legSpacing,
+  maxLegAngle,
+  minLegReach,
+  playerConfig,
+  restLegLength,
+  rollRadius,
+  shellRadius
+} from "./player-config";
+import {
   advanceAlongSurface,
   supportFromContact,
   surfaceNormal,
@@ -28,34 +35,9 @@ import {
 } from "./walking";
 import { angleDifference, approach, approachAngle, largestFit, lerp, tau } from "./util";
 
-const legCount = 10;
-const spacing = tau / legCount;
-const maxLegAngle = spacing * 0.49;
-// A critically damped spacing correction from rest closes 95% of the gap in 120 ms.
-const spacingSpringRate = 4.744 / 0.12;
-const restLength = 23;
-const maxReach = 43;
-const chargedLegLength = 13;
-const legExtensionSpeed = 175;
-const footUnfoldSeconds = 0.12;
-const shellFill = "#55585c";
-const legFill = "#73767a";
-const metalRim = "#94989c";
-const footFill = "#d63d41";
-const footRim = "#82272d";
-// World units per second, with acceleration rates in units per second squared.
-const topSpeed = 660;
-const runAcceleration = 240;
-const coastDeceleration = 175;
-const brakeDeceleration = 850;
-const tapJumpSpeed = 205;
-const fullJumpSpeed = 750;
-const fullChargeSeconds = 0.75;
-const chargedSpeedScale = 0.02;
-// Absolute horizontal component of the unit surface tangent.
-const wallEnterX = 0.4;
-const wallExitX = 0.65;
-const minLandingSlide = 20;
+const { leg: legConfig, foot, shell, hexagon, movement, jump, colors } = playerConfig;
+// A critically damped step from rest has 5% error at rate × time ≈ 4.744.
+const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 
 type FreeFoot = { kind: "free"; offset: number; angularVelocity: number };
 type FootState = FreeFoot | { kind: "reaching" | "planted"; anchor: FootAnchor };
@@ -65,7 +47,7 @@ type Leg = Pose & { foot: FootState; footScale: number; soleHalfWidth: number };
 // While the ankle is rotating toward its target, retract as far as necessary
 // to keep the visible foot on the accessible side of the terrain.
 function clearSwing(center: vec2, leg: Leg, edges: GroundEdge[]) {
-  const height = footHeight * leg.footScale;
+  const height = foot.height * leg.footScale;
   leg.length =
     largestFit(0, leg.length, (length) =>
       poseFits(center, { ...leg, length }, edges, height, leg.soleHalfWidth)
@@ -74,11 +56,12 @@ function clearSwing(center: vec2, leg: Leg, edges: GroundEdge[]) {
 
 // Even spacing between two pins means interpolating their offsets from the shell's spokes.
 function spacingOffsets(legs: Leg[], bodyAngle: number) {
-  const offsets: number[] = Array(legs.length).fill(0);
+  const legCount = legs.length;
+  const offsets: number[] = Array(legCount).fill(0);
   const pins: number[] = [];
   for (const [i, leg] of legs.entries()) {
     if (leg.foot.kind === "planted") {
-      offsets[i] = angleDifference(bodyAngle + i * spacing, leg.angle);
+      offsets[i] = angleDifference(bodyAngle + i * legSpacing, leg.angle);
       pins.push(i);
     }
   }
@@ -102,11 +85,11 @@ function settleSpacing(foot: FreeFoot, target: number, dt: number) {
 }
 
 export class Player implements Entity {
-  readonly legs: Leg[] = Array.from({ length: legCount }, (_, i) => ({
-    angle: i * spacing,
-    length: restLength,
-    footAngle: i * spacing,
-    footScale: foldedFootScale,
+  readonly legs: Leg[] = Array.from({ length: legConfig.count }, (_, i) => ({
+    angle: i * legSpacing,
+    length: restLegLength,
+    footAngle: i * legSpacing,
+    footScale: foot.foldedScale,
     soleHalfWidth: foldedHalfSole,
     foot: { kind: "free", offset: 0, angularVelocity: 0 }
   }));
@@ -118,7 +101,7 @@ export class Player implements Entity {
   private launchCharge: number | null = null;
   private groundSpeed = 0;
   readonly visual = new Drawable2D();
-  readonly body = new PhysicsBody(this.visual.position, 28);
+  readonly body = new PhysicsBody(this.visual.position, rollRadius);
   // The stance can crouch relative to the collider. Only the shell rolls.
   private readonly stance = new Drawable2D((ctx) => this.drawLegs(ctx), this.visual);
   private readonly ankles = this.legs.map(() => new Drawable2D(drawFoot, this.stance));
@@ -152,11 +135,11 @@ export class Player implements Entity {
   }
 
   private get jumpCharge() {
-    return Math.min(1, (this.jumpHeldSeconds ?? 0) / fullChargeSeconds);
+    return Math.min(1, (this.jumpHeldSeconds ?? 0) / jump.fullChargeSeconds);
   }
 
   private get strideScale() {
-    return lerp(1, chargedSpeedScale, this.launchCharge ?? this.jumpCharge);
+    return lerp(1, jump.chargedSpeedScale, this.launchCharge ?? this.jumpCharge);
   }
 
   control(input: InputState, dt: number) {
@@ -191,25 +174,25 @@ export class Player implements Entity {
     // Free and reaching feet follow this offset until they plant.
     vec2.set(
       this.shell.position,
-      2.5 * charge * Math.sin(tau * 11 * time),
-      1.5 * charge * Math.sin(tau * 14 * time)
+      jump.shakeAmplitudeX * charge * Math.sin(tau * jump.shakeHzX * time),
+      jump.shakeAmplitudeY * charge * Math.sin(tau * jump.shakeHzY * time)
     );
   }
 
   private setChargeColors(charge: number) {
     if (charge === this.displayedCharge) return;
     this.displayedCharge = charge;
-    const tint = (base: string, full: string) =>
+    const tint = ([base, full]: readonly [string, string]) =>
       charge === 0 ? base : `color-mix(in srgb, ${base}, ${full} ${charge * 100}%)`;
-    const rim = tint(metalRim, "#ffffff");
-    this.stance.color = { fill: tint(legFill, "#e4e7e9"), stroke: rim };
-    this.shell.color = { fill: tint(shellFill, "#c7cbd0"), stroke: rim };
-    const footColors = {
-      fill: tint(footFill, "#ff8889"),
-      stroke: tint(footRim, "#db5159")
-    };
+    const rim = tint(colors.metalBorder);
+    this.stance.color = { fill: tint(colors.legFill), stroke: rim };
+    this.shell.color = { fill: tint(colors.shellFill), stroke: rim };
+    const footColors = { fill: tint(colors.footFill), stroke: tint(colors.footBorder) };
     for (const ankle of this.ankles) ankle.color = footColors;
-    this.chargeIndicator.color = `rgb(${Math.round(255 * charge)} 0 0)`;
+    this.chargeIndicator.color = {
+      fill: tint(colors.hexagonFill),
+      stroke: tint(colors.hexagonBorder)
+    };
   }
 
   move(ground: GroundPolygon[], dt: number) {
@@ -220,12 +203,12 @@ export class Player implements Entity {
       const drive = this.moveInput * (this.wallRight || tangentX);
       const reversing = drive * this.groundSpeed < 0;
       const stride = this.strideScale;
-      const targetSpeed = reversing ? 0 : drive * topSpeed * stride;
+      const targetSpeed = reversing ? 0 : drive * movement.topSpeed * stride;
       const rate = reversing
-        ? brakeDeceleration
+        ? movement.brakeDeceleration
         : drive
-          ? runAcceleration
-          : coastDeceleration;
+          ? movement.runAcceleration
+          : movement.coastDeceleration;
       this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * stride * dt);
       if (this.launchCharge === null) {
         const { support, travel, retainedSpeed } = advanceAlongSurface(
@@ -237,9 +220,9 @@ export class Player implements Entity {
         this.support = support;
         const { pos, normal } = surfacePose(support, body.radius);
         const nextTangentX = -normal[1];
-        if (!this.wallRight && Math.abs(nextTangentX) <= wallEnterX) {
+        if (!this.wallRight && Math.abs(nextTangentX) <= movement.wallEnterX) {
           this.wallRight = Math.sign(tangentX);
-        } else if (this.wallRight && Math.abs(nextTangentX) >= wallExitX) {
+        } else if (this.wallRight && Math.abs(nextTangentX) >= movement.wallExitX) {
           this.wallRight = 0;
         }
         vec2.copy(body.pos, pos);
@@ -251,7 +234,7 @@ export class Player implements Entity {
         return;
       }
       vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
-      const launchSpeed = lerp(tapJumpSpeed, fullJumpSpeed, this.launchCharge);
+      const launchSpeed = lerp(jump.tapSpeed, jump.fullSpeed, this.launchCharge);
       vec2.scaleAndAdd(body.vel, body.vel, normal, launchSpeed);
       this.support = null;
     }
@@ -267,12 +250,12 @@ export class Player implements Entity {
     const normal = surfaceNormal(this.support, this.body.radius);
     this.groundSpeed = -normal[1] * this.body.vel[0] + normal[0] * this.body.vel[1];
     this.wallRight = 0;
-    if (Math.abs(normal[1]) > wallEnterX) return;
+    if (Math.abs(normal[1]) > movement.wallEnterX) return;
     // For a sliding landing the held key continues the slide. With no key
     // held, assign that motion to the key pointing into the wall.
     const approachKey = this.moveInput || -Math.sign(normal[0]);
     this.wallRight =
-      Math.abs(this.groundSpeed) > minLandingSlide
+      Math.abs(this.groundSpeed) > movement.minLandingSlide
         ? approachKey * Math.sign(this.groundSpeed)
         : 1; // With clockwise boundaries this makes the key into the wall climb.
   }
@@ -302,23 +285,22 @@ export class Player implements Entity {
   }
 
   private updateStance(dt: number): LegStance {
-    const depth = (restLength - chargedLegLength) * this.jumpCharge;
+    const depth = (legConfig.restExtension - legConfig.chargedExtension) * this.jumpCharge;
     const normal =
       depth > 0 && this.support ? surfaceNormal(this.support, this.body.radius) : [0, 0];
     const offset = this.stance.position;
-    const step = legExtensionSpeed * dt;
+    const step = legConfig.extensionSpeed * dt;
     vec2.set(
       offset,
       approach(offset[0], -normal[0] * depth, step),
       approach(offset[1], -normal[1] * depth, step)
     );
-    const length = restLength - vec2.length(offset);
-    const scale = length / restLength;
+    const extension = legConfig.restExtension - vec2.length(offset);
     return {
       center: vec2.add(vec2.create(), this.body.pos, offset),
-      restLength: length,
-      minReach: 14 * scale,
-      maxReach: maxReach * scale
+      restLength: shellRadius + extension,
+      minReach: minLegReach,
+      maxReach: shellRadius + legConfig.maxExtension * (extension / legConfig.restExtension)
     };
   }
 
@@ -327,16 +309,16 @@ export class Player implements Entity {
     const rollRate = speed / this.body.radius;
     // Faster steps leave less time to open the foot before its anchor passes.
     const scaleStep =
-      (1 - foldedFootScale) * (1 / footUnfoldSeconds + rollRate / spacing) * dt;
+      (1 - foot.foldedScale) * (1 / foot.unfoldSeconds + rollRate / legSpacing) * dt;
     const shake = this.shell.position;
     const swingCenter = vec2.add(vec2.create(), stance.center, shake);
     const edges = nearbyEdges(
       stance.center,
-      stance.maxReach + footHeight + halfSole + vec2.length(shake),
+      stance.maxReach + foot.height + halfSole + vec2.length(shake),
       ground
     );
     const contacts = this.legs.map((leg, i) => {
-      const restAngle = this.shell.rotation + i * spacing;
+      const restAngle = this.shell.rotation + i * legSpacing;
       if (
         this.support &&
         leg.foot.kind !== "free" &&
@@ -367,18 +349,30 @@ export class Player implements Entity {
         approach(leg.soleHalfWidth, anchor ? room : foldedHalfSole, halfSole * scaleStep)
       );
       if (leg.foot.kind === "planted") continue;
-      leg.footScale = approach(leg.footScale, anchor ? 1 : foldedFootScale, scaleStep);
+      leg.footScale = approach(leg.footScale, anchor ? 1 : foot.foldedScale, scaleStep);
       let target: Pose;
       if (leg.foot.kind === "free") {
         const offset = settleSpacing(leg.foot, offsets[i], dt);
-        leg.angle = this.shell.rotation + i * spacing + offset;
+        leg.angle = this.shell.rotation + i * legSpacing + offset;
         target = { angle: leg.angle, length: stance.restLength, footAngle: leg.angle };
       } else {
         target = plantedPose(stance.center, leg.foot.anchor);
-        leg.angle = approachAngle(leg.angle, target.angle, (14 + rollRate) * dt);
+        leg.angle = approachAngle(
+          leg.angle,
+          target.angle,
+          (legConfig.swingSpeed + rollRate) * dt
+        );
       }
-      leg.length = approach(leg.length, target.length, (legExtensionSpeed + speed) * dt);
-      leg.footAngle = approachAngle(leg.footAngle, target.footAngle, (15 + rollRate) * dt);
+      leg.length = approach(
+        leg.length,
+        target.length,
+        (legConfig.extensionSpeed + speed) * dt
+      );
+      leg.footAngle = approachAngle(
+        leg.footAngle,
+        target.footAngle,
+        (foot.turnSpeed + rollRate) * dt
+      );
       if (
         leg.foot.kind === "reaching" &&
         leg.footScale === 1 &&
@@ -401,9 +395,9 @@ export class Player implements Entity {
       ctx.lineTo(ankle.renderPosition[0], ankle.renderPosition[1]);
     }
     ctx.lineCap = "round";
-    ctx.lineWidth = 4;
+    ctx.lineWidth = legConfig.width;
     ctx.stroke();
-    ctx.lineWidth = 2.25;
+    ctx.lineWidth = legConfig.width - 2 * legConfig.borderWidth;
     ctx.strokeStyle = ctx.fillStyle;
     ctx.stroke();
   }
@@ -412,26 +406,32 @@ export class Player implements Entity {
 function drawFoot(ctx: CanvasRenderingContext2D) {
   ctx.beginPath();
   ctx.moveTo(0, 0);
-  ctx.lineTo(footHeight, -halfSole);
-  ctx.lineTo(footHeight, halfSole);
+  ctx.lineTo(foot.height, -halfSole);
+  ctx.lineTo(foot.height, halfSole);
   ctx.closePath();
   ctx.fill();
   // Keep the border inside the same triangle used to place the sole on terrain.
   ctx.clip();
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2 * foot.borderWidth;
   ctx.stroke();
 }
 
 function drawShell(ctx: CanvasRenderingContext2D) {
   ctx.beginPath();
-  ctx.roundRect(-10.5, -10.5, 21, 21, 1.5);
+  ctx.roundRect(
+    -shell.size / 2,
+    -shell.size / 2,
+    shell.size,
+    shell.size,
+    shell.cornerRadius
+  );
   ctx.fill();
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = shell.borderWidth;
   ctx.stroke();
 }
 
 function drawHexagon(ctx: CanvasRenderingContext2D) {
-  const radius = 7;
+  const { radius } = hexagon;
   ctx.beginPath();
   ctx.moveTo(radius, 0);
   for (let i = 1; i < 6; i++) {
@@ -440,4 +440,6 @@ function drawHexagon(ctx: CanvasRenderingContext2D) {
   }
   ctx.closePath();
   ctx.fill();
+  ctx.lineWidth = hexagon.borderWidth;
+  ctx.stroke();
 }

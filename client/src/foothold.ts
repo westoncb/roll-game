@@ -1,12 +1,10 @@
 import { vec2 } from "gl-matrix";
 import { segmentCrossesEdge } from "./collision";
 import type { GroundEdge } from "./ground";
+import { foldedHalfSole, halfSole, playerConfig } from "./player-config";
 import { angleDifference, largestFit } from "./util";
 
-export const footHeight = 8;
-export const halfSole = 9;
-export const foldedFootScale = 0.3;
-export const foldedHalfSole = halfSole * foldedFootScale;
+const { foot } = playerConfig;
 
 export type FootAnchor = { edge: GroundEdge; offset: number; maxHalfWidth: number };
 export type Pose = { angle: number; length: number; footAngle: number };
@@ -19,7 +17,7 @@ export type LegStance = {
 
 export function plantedPose(center: vec2, { edge, offset }: FootAnchor): Pose {
   const ankle = vec2.scaleAndAdd(vec2.create(), edge.a, edge.tangent, offset);
-  vec2.scaleAndAdd(ankle, ankle, edge.normal, footHeight);
+  vec2.scaleAndAdd(ankle, ankle, edge.normal, foot.height);
   const delta = vec2.subtract(ankle, ankle, center);
   return {
     angle: Math.atan2(delta[1], delta[0]),
@@ -72,7 +70,7 @@ export function reachable(
     pose.length >= stance.minReach - 0.001 &&
     Math.abs(angleDifference(restAngle, pose.angle)) <= swing + 0.00001 &&
     Math.cos(pose.angle - pose.footAngle) > 0 &&
-    poseFits(stance.center, pose, edges, footHeight, anchor.maxHalfWidth, anchor.edge)
+    poseFits(stance.center, pose, edges, foot.height, anchor.maxHalfWidth, anchor.edge)
   );
 }
 
@@ -104,7 +102,7 @@ export function findFoothold(
   let bestScore = Infinity;
   for (const edge of edges) {
     const fromEdge = vec2.subtract(vec2.create(), stance.center, edge.a);
-    const height = vec2.dot(fromEdge, edge.normal) - footHeight;
+    const height = vec2.dot(fromEdge, edge.normal) - foot.height;
     if (height <= 0 || height > stance.maxReach) continue;
 
     // Project the leg's angular and length limits onto the line of possible ankles.
@@ -131,7 +129,7 @@ export function findFoothold(
       const pose = plantedPose(stance.center, anchor);
       if (pose.length < stance.minReach) continue;
       const width = largestFit(foldedHalfSole, anchor.maxHalfWidth, (width) =>
-        poseFits(stance.center, pose, edges, footHeight, width, edge)
+        poseFits(stance.center, pose, edges, foot.height, width, edge)
       );
       if (width === null) continue;
       const score =
