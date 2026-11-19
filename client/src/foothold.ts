@@ -238,7 +238,7 @@ function overlap(a: Foothold, b: Foothold) {
   return vec2.squaredDistance(a.sole, b.sole) < foot.width ** 2;
 }
 
-function planGrips(edges: GroundEdge[], stance: LegStance, legs: GripRequest[]) {
+export function planGrips(edges: GroundEdge[], stance: LegStance, legs: GripRequest[]) {
   return chooseFootholds(
     legs.map(({ angle, grip }) => {
       const frame = { stance, angle };

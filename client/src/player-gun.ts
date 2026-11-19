@@ -1,0 +1,165 @@
+import { vec2, type ReadonlyVec2 } from "gl-matrix";
+import type { TerrainHit } from "./collision";
+import { Drawable2D } from "./drawable";
+import { playerConfig } from "./player-config";
+import { approach, lerp } from "./util";
+
+// The level identifies the first target; only a clingable hit supplies a movement anchor.
+export type BeamHit =
+  | ({ kind: "clingable" } & TerrainHit)
+  | { kind: "damageable"; point: vec2 };
+export type CastBeam = (from: vec2, to: vec2) => BeamHit | null;
+
+const gun = playerConfig.gun;
+type Shot =
+  | { kind: "idle" }
+  | { kind: "charging"; elapsed: number }
+  | { kind: "extending"; direction: vec2; remaining: number; castFrom: vec2 }
+  | { kind: "pulling"; hit: TerrainHit; latchLength: number }
+  | { kind: "retracting"; remaining: number };
+
+export class PlayerGun {
+  private shot: Shot = { kind: "idle" };
+  private readonly pivot: Drawable2D;
+  private readonly muzzle: Drawable2D;
+  private readonly tipNode: Drawable2D;
+  private readonly tip = vec2.create();
+
+  constructor(
+    private readonly root: Drawable2D,
+    stance: Drawable2D
+  ) {
+    this.tipNode = new Drawable2D((ctx) => this.drawBeam(ctx), root);
+    this.pivot = new Drawable2D(undefined, stance);
+    this.muzzle = new Drawable2D((ctx) => this.drawBarrel(ctx), this.pivot);
+  }
+
+  get phase() {
+    return this.shot.kind;
+  }
+  get chargeSeconds() {
+    return this.shot.kind === "charging" ? this.shot.elapsed : 0;
+  }
+  get charge() {
+    return Math.min(1, this.chargeSeconds / gun.fullChargeSeconds);
+  }
+  get anchor() {
+    return this.shot.kind === "pulling" ? this.shot.hit : null;
+  }
+
+  beginCharge(direction: ReadonlyVec2) {
+    if (this.shot.kind !== "idle") return;
+    this.pivot.setOrientation(Math.atan2(direction[1], direction[0]));
+    this.shot = { kind: "charging", elapsed: 0 };
+  }
+
+  aim(turn: number, dt: number) {
+    if (this.shot.kind !== "charging") return;
+    this.shot.elapsed += dt;
+    this.pivot.rotation += turn * gun.aimSpeed * dt;
+  }
+
+  fire() {
+    if (this.shot.kind !== "charging") return;
+    const remaining = lerp(gun.minRange, gun.maxRange, this.charge);
+    // A tap still fires from the end of a deployed barrel.
+    this.muzzle.position[0] = gun.barrelLength;
+    this.muzzle.localToWorld([0, 0], this.tip);
+    const mount = this.pivot.localToWorld([0, 0]);
+    const direction = vec2.subtract(vec2.create(), this.tip, mount);
+    this.shot = {
+      kind: "extending",
+      direction: vec2.normalize(direction, direction),
+      remaining,
+      castFrom: mount
+    };
+  }
+
+  finish() {
+    this.shot = { kind: "idle" };
+  }
+
+  /** Advance the shot and report a new latch to the movement controller. */
+  update(cast: CastBeam, dt: number) {
+    const shot = this.shot;
+    this.muzzle.position[0] = approach(
+      this.muzzle.position[0],
+      shot.kind === "idle" ? 0 : gun.barrelLength,
+      gun.deploySpeed * dt
+    );
+    const muzzle = this.muzzle.localToWorld([0, 0]);
+    if (shot.kind === "extending") {
+      const travel = Math.min(shot.remaining, gun.extensionSpeed * dt);
+      const end = vec2.scaleAndAdd(vec2.create(), this.tip, shot.direction, travel);
+      // On release this includes the mount-to-muzzle segment.
+      const hit = cast(shot.castFrom, end);
+      if (hit) {
+        vec2.copy(this.tip, hit.point);
+        const length = vec2.distance(muzzle, this.tip);
+        this.shot =
+          hit.kind === "clingable"
+            ? { kind: "pulling", hit, latchLength: length }
+            : { kind: "retracting", remaining: length };
+      } else {
+        vec2.copy(this.tip, end);
+        vec2.copy(shot.castFrom, end);
+        shot.remaining -= travel;
+        if (shot.remaining <= 0)
+          this.shot = { kind: "retracting", remaining: vec2.distance(muzzle, end) };
+      }
+    } else if (shot.kind === "retracting") {
+      const distance = vec2.distance(this.tip, muzzle);
+      shot.remaining = Math.max(
+        0,
+        Math.min(shot.remaining, distance) - gun.retractSpeed * dt
+      );
+      if (shot.remaining === 0) {
+        vec2.copy(this.tip, muzzle);
+        this.finish();
+      } else vec2.lerp(this.tip, muzzle, this.tip, shot.remaining / distance);
+    } else if (shot.kind !== "pulling") vec2.copy(this.tip, muzzle);
+    this.root.worldToLocal(this.tip, this.tipNode.position);
+    return shot.kind === "extending" && this.shot.kind === "pulling";
+  }
+
+  private drawBarrel(ctx: CanvasRenderingContext2D) {
+    const reach = this.muzzle.renderPosition[0];
+    if (reach <= 0) return;
+    ctx.fillRect(-reach, -4, reach, 8);
+    ctx.lineWidth = playerConfig.leg.borderWidth;
+    ctx.strokeRect(-reach, -4, reach, 8);
+  }
+
+  private drawBeam(ctx: CanvasRenderingContext2D) {
+    if (this.shot.kind === "idle" || this.shot.kind === "charging") return;
+    // Draw in the tip's sampled frame. The player root translates in world axes.
+    const dx = this.muzzle.renderWorldMatrix[4] - this.tipNode.renderWorldMatrix[4];
+    const dy = this.muzzle.renderWorldMatrix[5] - this.tipNode.renderWorldMatrix[5];
+    const length = Math.hypot(dx, dy);
+    ctx.translate(dx, dy);
+    ctx.rotate(Math.atan2(-dy, -dx));
+    ctx.globalCompositeOperation = "lighter";
+    ctx.fillStyle = "rgba(66,214,236,.18)";
+    ctx.fillRect(0, -4, length, 8);
+    // Keep the last partial sleeve at the anchor. The first sleeve disappears into the muzzle.
+    const pitch = gun.segmentLength;
+    const clipped =
+      this.shot.kind === "pulling"
+        ? (((this.shot.latchLength - length) % pitch) + pitch) % pitch
+        : 0;
+    const sleeves = new Path2D();
+    for (let s = -clipped; s < length; s += pitch) {
+      const start = Math.max(0, s),
+        end = Math.min(length, s + pitch - 1.5);
+      if (end > start) sleeves.rect(start, -2, end - start, 4);
+    }
+    ctx.fillStyle = "#61d4df";
+    ctx.shadowColor = "#57dce6";
+    ctx.shadowBlur = 6;
+    ctx.fill(sleeves);
+    ctx.shadowBlur = 0;
+    ctx.scale(1, 0.375);
+    ctx.fillStyle = "#ddffff";
+    ctx.fill(sleeves);
+  }
+}

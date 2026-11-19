@@ -105,3 +105,81 @@ export function edgeIntersectsConvexPolygon(edge: GroundEdge, vertices: vec2[]) 
   }
   return true;
 }
+
+export type TerrainHit = Pick<
+  GroundContact,
+  "ground" | "edgeIndex" | "point" | "normal"
+> & {
+  /** Fraction of the requested motion completed at first contact. */
+  fraction: number;
+};
+
+/** Cast against solid terrain, including the destination. A resting contact allows departure. */
+export function castSegment(from: vec2, to: vec2, ground: GroundPolygon[]) {
+  return sweepCircle(from, 0, vec2.subtract(vec2.create(), to, from), ground);
+}
+
+/** Sweep a circle against offset faces and the round arcs around exposed vertices. */
+export function sweepCircle(
+  from: vec2,
+  radius: number,
+  delta: vec2,
+  ground: GroundPolygon[]
+): TerrainHit | null {
+  const motionSquared = vec2.squaredLength(delta);
+  if (motionSquared === 0) return null;
+  const tolerance = 0.0001;
+  let first: TerrainHit | null = null;
+  for (const polygon of ground) {
+    const initial = nearestBoundary(from, polygon);
+    if (
+      initial.distance < -tolerance ||
+      (initial.distance < radius - tolerance && vec2.dot(delta, initial.normal) < 0)
+    )
+      return { ...initial, fraction: 0 };
+
+    for (const edge of polygon.edges) {
+      const x = from[0] - edge.a[0],
+        y = from[1] - edge.a[1];
+      const inward = -vec2.dot(delta, edge.normal);
+      const gap = x * edge.normal[0] + y * edge.normal[1] - radius;
+      if (inward > 1e-9 && gap >= -tolerance) {
+        const fraction = Math.max(0, gap / inward);
+        if (fraction <= 1 && (!first || fraction < first.fraction)) {
+          const along =
+            (x + delta[0] * fraction) * edge.tangent[0] +
+            (y + delta[1] * fraction) * edge.tangent[1];
+          if (along >= 0 && along <= edge.length) {
+            first = {
+              ground: polygon,
+              edgeIndex: edge.index,
+              fraction,
+              normal: edge.normal,
+              point: vec2.scaleAndAdd(vec2.create(), edge.a, edge.tangent, along)
+            };
+          }
+        }
+      }
+      if (radius === 0) continue;
+      const toward = -(x * delta[0] + y * delta[1]);
+      const discriminant =
+        toward * toward - motionSquared * (x * x + y * y - radius * radius);
+      if (toward <= 0 || discriminant <= 0) continue;
+      const fraction = (toward - Math.sqrt(discriminant)) / motionSquared;
+      if (fraction < 0 || fraction > 1 || (first && first.fraction <= fraction)) continue;
+      const normal = vec2.fromValues(x + delta[0] * fraction, y + delta[1] * fraction);
+      const prev =
+        polygon.edges[(edge.index + polygon.edges.length - 1) % polygon.edges.length];
+      if (vec2.dot(normal, prev.tangent) < 0 || vec2.dot(normal, edge.tangent) > 0)
+        continue;
+      first = {
+        ground: polygon,
+        edgeIndex: edge.index,
+        point: edge.a,
+        normal: vec2.normalize(normal, normal),
+        fraction
+      };
+    }
+  }
+  return first;
+}

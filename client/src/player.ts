@@ -1,11 +1,12 @@
 import { vec2 } from "gl-matrix";
 import { gameAssets } from "./assets";
-import { nearbyEdges } from "./collision";
+import { nearbyEdges, sweepCircle, type TerrainHit } from "./collision";
 import { Drawable2D } from "./drawable";
 import type { Entity } from "./entity";
 import {
   fitCrouchGrips,
   planFootholds,
+  planGrips,
   plantedPose,
   poseFits,
   soleAt,
@@ -16,6 +17,7 @@ import {
 } from "./foothold";
 import type { GroundEdge, GroundPolygon } from "./ground";
 import type { InputState } from "./input";
+import { PlayerGun, type CastBeam } from "./player-gun";
 import type { EffectPlayer } from "./particles/system";
 import { collectContacts, gravityAt, stepPhysics, PhysicsBody } from "./physics";
 import {
@@ -118,6 +120,7 @@ export class Player implements Entity {
   private wallRight = 0;
   private jumpHeldSeconds: number | null = null;
   private launchCharge: number | null = null;
+  private readonly lastJumpDirection = vec2.fromValues(0, -1);
   private jumping = false;
   private landingVelocity?: vec2;
   private groundSpeed = 0;
@@ -129,6 +132,7 @@ export class Player implements Entity {
   private readonly joints = this.ankles.map(
     (ankle) => new Drawable2D(drawAnkleJoint, ankle)
   );
+  private readonly gun = new PlayerGun(this.visual, this.stance);
   private readonly shell = new Drawable2D(drawShell, this.stance);
   private readonly chargeIndicator = new Drawable2D(drawHexagon, this.shell);
   private displayedCharge?: number;
@@ -136,7 +140,8 @@ export class Player implements Entity {
   constructor(
     start: vec2,
     ground: GroundPolygon[],
-    private readonly particles: EffectPlayer
+    private readonly particles: EffectPlayer,
+    private readonly castBeam: CastBeam
   ) {
     vec2.copy(this.visual.position, start);
     this.setChargeColors(0);
@@ -196,16 +201,27 @@ export class Player implements Entity {
     );
     const previousStride = this.strideScale;
     this.launchCharge = null;
-    if (this.support) {
-      for (const change of input.keyChanges) {
-        if (change.code !== "Space") continue;
-        if (change.type === "press") {
-          this.jumpHeldSeconds = 0;
-        } else if (this.jumpHeldSeconds !== null) {
+    for (const change of input.keyChanges) {
+      if (change.code === "KeyF") {
+        if (change.type === "release") this.gun.fire();
+        else if (this.jumpHeldSeconds === null && this.launchCharge === null)
+          this.gun.beginCharge(
+            this.support ? this.pushOffDirection(this.support) : this.lastJumpDirection
+          );
+      } else if (change.code === "Space" && this.support && this.gun.phase === "idle") {
+        if (change.type === "press") this.jumpHeldSeconds = 0;
+        else if (this.jumpHeldSeconds !== null) {
           this.launchCharge = this.jumpCharge();
           this.jumpHeldSeconds = null;
-          break;
         }
+      }
+    }
+    if (this.gun.phase === "charging") {
+      // Blur clears held keys without issuing a fire command.
+      if (!input.keysDown.has("KeyF")) this.gun.finish();
+      else {
+        this.gun.aim(this.moveInput[0], dt);
+        vec2.zero(this.moveInput);
       }
     }
     if (!this.support || !input.keysDown.has("Space")) this.jumpHeldSeconds = null;
@@ -213,12 +229,13 @@ export class Player implements Entity {
     // Shortening a stride sheds the same fraction of the player's existing speed.
     const stride = this.strideScale;
     if (stride < previousStride) this.groundSpeed *= stride / previousStride;
-    this.poseJumpCharge();
+    this.poseChargeVisuals(
+      this.jumpCharge() || this.gun.charge,
+      this.jumpHeldSeconds ?? this.gun.chargeSeconds
+    );
   }
 
-  private poseJumpCharge() {
-    const charge = this.jumpCharge();
-    const time = this.jumpHeldSeconds ?? 0;
+  private poseChargeVisuals(charge: number, time: number) {
     this.setChargeColors(charge);
     // Free and reaching feet follow this offset until they plant.
     vec2.set(
@@ -247,6 +264,11 @@ export class Player implements Entity {
 
   move(ground: GroundPolygon[], dt: number) {
     const body = this.body;
+    const anchor = this.gun.anchor;
+    if (anchor) {
+      this.pullTo(anchor, ground, dt);
+      return;
+    }
     if (this.support) {
       const normal = surfaceNormal(this.support, body.radius);
       const tangentX = -normal[1];
@@ -266,11 +288,12 @@ export class Player implements Entity {
       const reversing = drive * this.groundSpeed < 0;
       const stride = this.strideScale;
       const targetSpeed = reversing ? 0 : drive * movement.topSpeed * stride;
-      const rate = reversing
-        ? movement.brakeDeceleration
-        : drive
-          ? movement.runAcceleration
-          : movement.coastDeceleration;
+      const rate =
+        reversing || this.gun.phase === "charging"
+          ? movement.brakeDeceleration
+          : drive
+            ? movement.runAcceleration
+            : movement.coastDeceleration;
       this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * stride * dt);
       if (this.launchCharge === null) {
         const { support, travel, retainedSpeed } = advanceAlongSurface(
@@ -305,6 +328,7 @@ export class Player implements Entity {
           ? vec2.scale(vec2.create(), offset, -1 / depth)
           : this.pushOffDirection(this.support);
       vec2.scaleAndAdd(body.vel, body.vel, direction, launchSpeed);
+      vec2.copy(this.lastJumpDirection, direction);
       this.jumping = true;
       this.support = null;
     }
@@ -313,6 +337,24 @@ export class Player implements Entity {
     stepPhysics(body, ground, dt);
     this.land(ground);
     this.steerOnLanding();
+  }
+
+  private pullTo(anchor: TerrainHit, ground: GroundPolygon[], dt: number) {
+    const body = this.body;
+    const goal = vec2.scaleAndAdd(vec2.create(), anchor.point, anchor.normal, body.radius);
+    const travel = vec2.subtract(vec2.create(), goal, body.pos);
+    const distance = vec2.length(travel);
+    const step = playerConfig.gun.pullSpeed * dt;
+    if (distance > step) vec2.scale(travel, travel, step / distance);
+    const hit = sweepCircle(body.pos, body.radius, travel, ground);
+    vec2.scaleAndAdd(body.pos, body.pos, travel, hit?.fraction ?? 1);
+    if (hit || distance <= step) {
+      this.gun.finish();
+      this.support = supportFromContact(hit ?? anchor, body.radius);
+      vec2.zero(body.vel);
+      this.steerOnLanding();
+    } else vec2.scale(body.vel, travel, 1 / dt);
+    collectContacts(body, ground);
   }
 
   private steerOnLanding() {
@@ -355,6 +397,15 @@ export class Player implements Entity {
   }
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
+    const latched = this.gun.update(this.castBeam, dt);
+    if (latched) {
+      this.support = null;
+      this.jumping = false;
+      this.landingVelocity = undefined;
+      this.groundSpeed = 0;
+      vec2.zero(this.body.vel);
+      vec2.zero(this.body.accel);
+    }
     this.updateFeet(dt, ground);
     this.poseAnkles();
   }
@@ -427,7 +478,10 @@ export class Player implements Entity {
         grip
       };
     });
-    const plan = planFootholds(edges, requests, held);
+    const plan =
+      this.gun.phase === "charging"
+        ? planGrips(edges, stance, legs)
+        : planFootholds(edges, requests, held);
     for (const [i, leg] of this.legs.entries()) {
       const contact = plan[i];
       if (leg.foot.kind === "planted") {
@@ -464,6 +518,7 @@ export class Player implements Entity {
   private updateFeet(dt: number, ground: GroundPolygon[]) {
     const speed = Math.abs(this.groundSpeed);
     const rollRate = speed / this.body.radius;
+    const retractLegs = this.gun.phase === "charging" || this.gun.phase === "pulling";
     // Faster steps leave less time to open the foot before its anchor passes.
     const scaleStep =
       (1 - foot.foldedScale) * (1 / foot.unfoldSeconds + rollRate / legSpacing) * dt;
@@ -486,14 +541,17 @@ export class Player implements Entity {
       const step = leg.step;
       const progress = step ? 1 - step.remaining / foot.stepSeconds : 1;
       const lift = step ? Math.sin(Math.PI * progress) : 0;
-      const scale =
-        leg.foot.kind === "reaching" ? lerp(1, foot.foldedScale, lift) : foot.foldedScale;
+      const scale = retractLegs
+        ? 0
+        : leg.foot.kind === "reaching"
+          ? lerp(1, foot.foldedScale, lift)
+          : foot.foldedScale;
       leg.footScale = approach(leg.footScale, scale, scaleStep);
       let target: Pose;
       if (leg.foot.kind === "free") {
         const offset = settleSpacing(leg.foot, offsets[i], dt);
         const angle = this.shell.rotation + i * legSpacing + offset;
-        target = { angle, length: stance.restLength, footAngle: angle };
+        target = { angle, length: retractLegs ? 0 : stance.restLength, footAngle: angle };
       } else {
         target = plantedPose(stance.center, leg.foot.anchor);
       }

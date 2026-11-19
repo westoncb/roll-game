@@ -54,6 +54,18 @@ export const playerConfig = {
     shakeHzX: 11,
     shakeHzY: 14
   },
+  gun: {
+    fullChargeSeconds: 0.8,
+    aimSpeed: 2.7,
+    minRange: 190,
+    maxRange: 720,
+    extensionSpeed: 900,
+    retractSpeed: 1150,
+    pullSpeed: 710,
+    barrelLength: 36,
+    deploySpeed: 160,
+    segmentLength: 13
+  },
   // Each pair runs from neutral to fully charged.
   colors: {
     shellFill: ["#55585c", "#c7cbd0"],

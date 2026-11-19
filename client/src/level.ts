@@ -1,4 +1,5 @@
 import { vec2 } from "gl-matrix";
+import { castSegment } from "./collision";
 import type { Entity } from "./entity";
 import { GroundPolygon } from "./ground";
 import type { InputState } from "./input";
@@ -34,7 +35,11 @@ export class Level {
     this.player = new Player(
       vec2.fromValues(...data.playerStart),
       this.ground,
-      this.particles
+      this.particles,
+      (from, to) => {
+        const hit = castSegment(from, to, this.ground);
+        return hit && { kind: "clingable", ...hit };
+      }
     );
     this.entities = [this.player];
   }
