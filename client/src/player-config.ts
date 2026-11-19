@@ -35,6 +35,7 @@ export const playerConfig = {
   },
   movement: {
     topSpeed: 660,
+    maxStepDustStrength: 0.35,
     runAcceleration: 240,
     coastDeceleration: 175,
     brakeDeceleration: 850,

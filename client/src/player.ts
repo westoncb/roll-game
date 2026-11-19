@@ -514,23 +514,30 @@ export class Player implements Entity {
       ) {
         const { anchor, landingVelocity } = leg.foot;
         leg.foot = { kind: "planted", anchor, plantedOffset: anchor.offset };
-        if (landingVelocity) {
-          const { edge, offset } = anchor;
-          const impactSpeed = Math.max(0, -vec2.dot(landingVelocity, edge.normal));
-          this.particles.play(
-            gameAssets.particles.get("landing-dust"),
-            {
-              kind: "world",
-              position: soleAt(edge, offset),
-              angle: Math.atan2(edge.normal[1], edge.normal[0])
-            },
-            { strength: Math.min(1, impactSpeed / jump.fullSpeed) }
-          );
-        }
+        if (landingVelocity || speed > 0) this.playFootDust(anchor, speed, landingVelocity);
       } else {
         clearSwing(swingCenter, leg, edges);
       }
     }
+  }
+
+  private playFootDust(
+    { edge, offset }: FootAnchor,
+    speed: number,
+    landingVelocity?: vec2
+  ) {
+    const strength = landingVelocity
+      ? Math.min(1, Math.max(0, -vec2.dot(landingVelocity, edge.normal)) / jump.fullSpeed)
+      : movement.maxStepDustStrength * Math.min(1, speed / movement.topSpeed);
+    this.particles.play(
+      gameAssets.particles.get("landing-dust"),
+      {
+        kind: "world",
+        position: soleAt(edge, offset),
+        angle: Math.atan2(edge.normal[1], edge.normal[0])
+      },
+      { strength }
+    );
   }
 
   private drawLegs(ctx: CanvasRenderingContext2D) {
