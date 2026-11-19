@@ -1,6 +1,6 @@
 import { vec2 } from "gl-matrix";
 import { gameAssets } from "./assets";
-import { nearbyEdges, sweepCircle, type TerrainHit } from "./collision";
+import { nearbyEdges } from "./collision";
 import { Drawable2D } from "./drawable";
 import type { Entity } from "./entity";
 import {
@@ -122,8 +122,6 @@ export class Player implements Entity {
   private jumpHeldSeconds: number | null = null;
   private launchCharge: number | null = null;
   private readonly lastJumpDirection = vec2.fromValues(0, -1);
-  private pullSupport: Support | null = null;
-  private jumping = false;
   private landingVelocity?: vec2;
   private groundSpeed = 0;
   readonly visual = new Drawable2D();
@@ -266,12 +264,8 @@ export class Player implements Entity {
 
   move(ground: GroundPolygon[], dt: number) {
     const body = this.body;
-    const anchor = this.gun.anchor;
-    if (anchor) {
-      this.pullTo(anchor, ground, dt);
-      return;
-    }
-    if (this.support) {
+    const pull = this.gun.pullVelocity(body.pos, body.radius);
+    if (this.support && !pull) {
       const normal = surfaceNormal(this.support, body.radius);
       const tangentX = -normal[1];
       let drive = this.moveInput[0] * (this.wallRight || tangentX);
@@ -331,57 +325,19 @@ export class Player implements Entity {
           : this.pushOffDirection(this.support);
       vec2.scaleAndAdd(body.vel, body.vel, direction, launchSpeed);
       vec2.copy(this.lastJumpDirection, direction);
-      this.jumping = true;
       this.support = null;
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;
-    vec2.copy(body.accel, gravityAt(body, ground));
-    stepPhysics(body, ground, dt);
+    if (pull) {
+      vec2.copy(body.vel, pull);
+      vec2.zero(body.accel);
+    } else vec2.copy(body.accel, gravityAt(body, ground));
+    const from = this.support;
+    const hit = stepPhysics(body, ground, dt, from && surfaceNormal(from, body.radius));
+    this.support = from && supportOnEdge(body.pos, body.radius, from.edge);
     this.land(ground);
     this.steerOnLanding();
-  }
-
-  private pullTo(anchor: TerrainHit, ground: GroundPolygon[], dt: number) {
-    const body = this.body;
-    const goal = vec2.scaleAndAdd(vec2.create(), anchor.point, anchor.normal, body.radius);
-    const travel = vec2.subtract(vec2.create(), goal, body.pos);
-    const step = playerConfig.gun.pullSpeed * dt;
-    const from = this.pullSupport;
-    const normal = from && surfaceNormal(from, body.radius);
-    let arrived: Support | null = null;
-    const previous = vec2.clone(body.pos);
-
-    if (from && normal && vec2.dot(travel, normal) <= 0.0001) {
-      // A shallow shot can pull into the face we launched from. Follow that face
-      // until the tether lifts us off it or we reach another support.
-      const along = -normal[1] * travel[0] + normal[0] * travel[1];
-      const stride = Math.max(-step, Math.min(step, along));
-      const next = advanceAlongSurface(from, stride, body.radius, ground, "stop");
-      this.pullSupport = next.support;
-      vec2.copy(body.pos, surfacePose(next.support, body.radius).pos);
-      if (Math.abs(along) <= 0.0001 || next.retainedSpeed === 0) arrived = next.support;
-    } else {
-      this.pullSupport = null;
-      // At the stand-off point, even a rounding gap should resolve against the real surface.
-      if (vec2.squaredLength(travel) < 1e-8) vec2.subtract(travel, anchor.point, body.pos);
-      const distance = vec2.length(travel);
-      if (distance > step) vec2.scale(travel, travel, step / distance);
-      const hit = sweepCircle(body.pos, body.radius, travel, ground);
-      vec2.scaleAndAdd(body.pos, body.pos, travel, hit?.fraction ?? 1);
-      if (hit) arrived = supportFromContact(hit, body.radius);
-    }
-    collectContacts(body, ground);
-    if (arrived) {
-      this.pullSupport = null;
-      this.gun.finish();
-      const targetEdge = anchor.ground.edges[anchor.edgeIndex];
-      this.support = supportOnEdge(body.pos, body.radius, targetEdge) ?? arrived;
-      vec2.zero(body.vel);
-      this.steerOnLanding();
-    } else {
-      vec2.subtract(body.vel, body.pos, previous);
-      vec2.scale(body.vel, body.vel, 1 / dt);
-    }
+    if (pull && this.support && (hit || !from)) this.gun.finish();
   }
 
   private steerOnLanding() {
@@ -405,35 +361,23 @@ export class Player implements Entity {
       const contacts = this.body.contacts;
       if (!contacts.length) return;
       const hit = contacts.reduce((deepest, contact) =>
-        contact.depth > deepest.depth ? contact : deepest
+        contact.depth > deepest.depth + 0.0001 ? contact : deepest
       );
       const normalSpeed = vec2.dot(this.body.vel, hit.normal);
       if (normalSpeed <= 0) {
-        this.support = supportFromContact(hit, this.body.radius);
-        if (this.jumping) {
-          this.jumping = false;
+        if (normalSpeed < 0 && !this.support)
           this.landingVelocity = vec2.clone(this.body.vel);
-        }
+        this.support = supportFromContact(hit, this.body.radius);
+        vec2.scaleAndAdd(this.body.vel, this.body.vel, hit.normal, -normalSpeed);
       }
       if (hit.depth < 0.0001) return;
       vec2.scaleAndAdd(this.body.pos, this.body.pos, hit.normal, hit.depth);
-      const inward = Math.min(0, normalSpeed);
-      vec2.scaleAndAdd(this.body.vel, this.body.vel, hit.normal, -inward);
       collectContacts(this.body, ground);
     }
   }
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
-    const latched = this.gun.update(this.castBeam, dt);
-    if (latched) {
-      this.pullSupport = this.support;
-      this.support = null;
-      this.jumping = false;
-      this.landingVelocity = undefined;
-      this.groundSpeed = 0;
-      vec2.zero(this.body.vel);
-      vec2.zero(this.body.accel);
-    }
+    this.gun.update(this.castBeam, dt);
     this.updateFeet(dt, ground);
     this.poseAnkles();
   }
@@ -546,7 +490,7 @@ export class Player implements Entity {
   private updateFeet(dt: number, ground: GroundPolygon[]) {
     const speed = Math.abs(this.groundSpeed);
     const rollRate = speed / this.body.radius;
-    const retractLegs = this.gun.phase === "charging" || this.gun.phase === "pulling";
+    const retractLegs = this.gun.phase === "charging";
     // Faster steps leave less time to open the foot before its anchor passes.
     const scaleStep =
       (1 - foot.foldedScale) * (1 / foot.unfoldSeconds + rollRate / legSpacing) * dt;

@@ -47,6 +47,18 @@ export class PlayerGun {
     return this.shot.kind === "pulling" ? this.shot.hit : null;
   }
 
+  pullVelocity(center: vec2, radius: number) {
+    const anchor = this.anchor;
+    if (!anchor) return null;
+    const toAnchor = vec2.subtract(vec2.create(), anchor.point, center);
+    const distance = vec2.length(toAnchor);
+    if (distance <= radius + 0.001) {
+      this.finish();
+      return null;
+    }
+    return vec2.scale(toAnchor, toAnchor, gun.pullSpeed / distance);
+  }
+
   beginCharge(direction: ReadonlyVec2) {
     if (this.shot.kind !== "idle") return;
     this.pivot.setOrientation(Math.atan2(direction[1], direction[0]));
@@ -79,7 +91,6 @@ export class PlayerGun {
     this.shot = { kind: "idle" };
   }
 
-  /** Advance the shot and report a new latch to the movement controller. */
   update(cast: CastBeam, dt: number) {
     const shot = this.shot;
     this.muzzle.position[0] = approach(
@@ -119,7 +130,6 @@ export class PlayerGun {
       } else vec2.lerp(this.tip, muzzle, this.tip, shot.remaining / distance);
     } else if (shot.kind !== "pulling") vec2.copy(this.tip, muzzle);
     this.root.worldToLocal(this.tip, this.tipNode.position);
-    return shot.kind === "extending" && this.shot.kind === "pulling";
   }
 
   private drawBarrel(ctx: CanvasRenderingContext2D) {

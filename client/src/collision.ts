@@ -129,12 +129,15 @@ export function sweepCircle(
   const motionSquared = vec2.squaredLength(delta);
   if (motionSquared === 0) return null;
   const tolerance = 0.0001;
+  // Projecting a float32 velocity onto a resting face can leave a tiny inward component.
+  const tangentTolerance = radius > 0 ? Math.sqrt(motionSquared) * 1e-6 : 1e-9;
   let first: TerrainHit | null = null;
   for (const polygon of ground) {
     const initial = nearestBoundary(from, polygon);
     if (
       initial.distance < -tolerance ||
-      (initial.distance < radius - tolerance && vec2.dot(delta, initial.normal) < 0)
+      (initial.distance < radius - tolerance &&
+        vec2.dot(delta, initial.normal) < -tangentTolerance)
     )
       return { ...initial, fraction: 0 };
 
@@ -143,7 +146,7 @@ export function sweepCircle(
         y = from[1] - edge.a[1];
       const inward = -vec2.dot(delta, edge.normal);
       const gap = x * edge.normal[0] + y * edge.normal[1] - radius;
-      if (inward > 1e-9 && gap >= -tolerance) {
+      if (inward > tangentTolerance && gap >= -tolerance) {
         const fraction = Math.max(0, gap / inward);
         if (fraction <= 1 && (!first || fraction < first.fraction)) {
           const along =
