@@ -9,9 +9,9 @@ export const playerConfig = {
     // Extensions are measured from the shell's outer corner radius to the ankle.
     // The minimum leaves room for the shell to shake around a planted leg.
     minExtension: 3,
-    chargedExtension: 4,
-    restExtension: 12,
-    maxExtension: 32,
+    chargedExtension: 3,
+    restExtension: 9,
+    maxExtension: 24,
     width: 4,
     borderWidth: 0.875,
     extensionSpeed: 175,
@@ -25,6 +25,11 @@ export const playerConfig = {
     borderWidth: 1,
     foldedScale: 0.3,
     unfoldSeconds: 0.12,
+    stepSeconds: 0.085,
+    stepHeight: 6,
+    slideSpeed: 120,
+    // At speed, check a new grip over this fraction of the angle between legs.
+    gripCheckSpacingFraction: 0.25,
     turnSpeed: 15
   },
   movement: {
@@ -66,6 +71,5 @@ export const minLegReach = shellRadius + leg.minExtension;
 // At rest a ground-facing leg and an open pad span the rolling radius.
 export const rollRadius = restLegLength + foot.height;
 export const halfSole = foot.width / 2;
-export const foldedHalfSole = halfSole * foot.foldedScale;
 export const legSpacing = tau / leg.count;
 export const maxLegAngle = legSpacing * leg.swingFractionOfSpacing;

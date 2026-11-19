@@ -3,11 +3,9 @@ import { nearbyEdges } from "./collision";
 import { Drawable2D } from "./drawable";
 import type { Entity } from "./entity";
 import {
-  findFoothold,
-  padHalfWidth,
+  planFootholds,
   plantedPose,
   poseFits,
-  reachable,
   type FootAnchor,
   type LegStance,
   type Pose
@@ -16,10 +14,8 @@ import type { GroundEdge, GroundPolygon } from "./ground";
 import type { InputState } from "./input";
 import { collectContacts, gravityAt, stepPhysics, PhysicsBody } from "./physics";
 import {
-  foldedHalfSole,
   halfSole,
   legSpacing,
-  maxLegAngle,
   minLegReach,
   playerConfig,
   restLegLength,
@@ -40,9 +36,26 @@ const { leg: legConfig, foot, shell, hexagon, movement, jump, colors } = playerC
 const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 
 type FreeFoot = { kind: "free"; offset: number; angularVelocity: number };
-type FootState = FreeFoot | { kind: "reaching" | "planted"; anchor: FootAnchor };
+type FootState =
+  | FreeFoot
+  | { kind: "reaching"; anchor: FootAnchor }
+  | { kind: "planted"; anchor: FootAnchor; plantedOffset: number };
+type FootStep = { from: FootAnchor; remaining: number };
 // Angles are in world coordinates. The leg index identifies its part of the rotating body.
-type Leg = Pose & { foot: FootState; footScale: number; soleHalfWidth: number };
+type Leg = Pose & {
+  foot: FootState;
+  step: FootStep | null;
+  footScale: number;
+};
+
+function stepPose(from: Pose, to: Pose, progress: number, lift: number): Pose {
+  const blend = progress * progress * (3 - 2 * progress);
+  return {
+    angle: from.angle + angleDifference(from.angle, to.angle) * blend,
+    length: Math.max(shellRadius, lerp(from.length, to.length, blend) - lift),
+    footAngle: from.footAngle + angleDifference(from.footAngle, to.footAngle) * blend
+  };
+}
 
 // While the ankle is rotating toward its target, retract as far as necessary
 // to keep the visible foot on the accessible side of the terrain.
@@ -50,7 +63,7 @@ function clearSwing(center: vec2, leg: Leg, edges: GroundEdge[]) {
   const height = foot.height * leg.footScale;
   leg.length =
     largestFit(0, leg.length, (length) =>
-      poseFits(center, { ...leg, length }, edges, height, leg.soleHalfWidth)
+      poseFits(center, { ...leg, length }, edges, height, halfSole * leg.footScale)
     ) ?? 0;
 }
 
@@ -90,7 +103,7 @@ export class Player implements Entity {
     length: restLegLength,
     footAngle: i * legSpacing,
     footScale: foot.foldedScale,
-    soleHalfWidth: foldedHalfSole,
+    step: null,
     foot: { kind: "free", offset: 0, angularVelocity: 0 }
   }));
   support: Support | null = null;
@@ -130,16 +143,18 @@ export class Player implements Entity {
         vec2.add(ankle.position, ankle.position, this.shell.position);
       }
       ankle.setOrientation(leg.footAngle);
-      vec2.set(ankle.scale, leg.footScale, leg.soleHalfWidth / halfSole);
+      vec2.set(ankle.scale, leg.footScale, leg.footScale);
     }
   }
 
-  private get jumpCharge() {
-    return Math.min(1, (this.jumpHeldSeconds ?? 0) / jump.fullChargeSeconds);
+  private jumpCharge(secondsAhead = 0) {
+    return this.jumpHeldSeconds === null
+      ? 0
+      : Math.min(1, (this.jumpHeldSeconds + secondsAhead) / jump.fullChargeSeconds);
   }
 
   private get strideScale() {
-    return lerp(1, jump.chargedSpeedScale, this.launchCharge ?? this.jumpCharge);
+    return lerp(1, jump.chargedSpeedScale, this.launchCharge ?? this.jumpCharge());
   }
 
   control(input: InputState, dt: number) {
@@ -153,7 +168,7 @@ export class Player implements Entity {
         if (change.type === "press") {
           this.jumpHeldSeconds = 0;
         } else if (this.jumpHeldSeconds !== null) {
-          this.launchCharge = this.jumpCharge;
+          this.launchCharge = this.jumpCharge();
           this.jumpHeldSeconds = null;
           break;
         }
@@ -168,7 +183,7 @@ export class Player implements Entity {
   }
 
   private poseJumpCharge() {
-    const charge = this.jumpCharge;
+    const charge = this.jumpCharge();
     const time = this.jumpHeldSeconds ?? 0;
     this.setChargeColors(charge);
     // Free and reaching feet follow this offset until they plant.
@@ -279,29 +294,91 @@ export class Player implements Entity {
   }
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
-    const stance = this.updateStance(dt);
-    this.updateFeet(dt, ground, stance);
+    this.crouchOffset(this.stance.position, dt, this.jumpCharge());
+    this.updateFeet(dt, ground, this.stanceAt(0));
     this.poseAnkles();
   }
 
-  private updateStance(dt: number): LegStance {
-    const depth = (legConfig.restExtension - legConfig.chargedExtension) * this.jumpCharge;
+  private crouchOffset(out: vec2, dt: number, charge: number) {
+    const depth = (legConfig.restExtension - legConfig.chargedExtension) * charge;
     const normal =
       depth > 0 && this.support ? surfaceNormal(this.support, this.body.radius) : [0, 0];
     const offset = this.stance.position;
     const step = legConfig.extensionSpeed * dt;
-    vec2.set(
-      offset,
+    return vec2.set(
+      out,
       approach(offset[0], -normal[0] * depth, step),
       approach(offset[1], -normal[1] * depth, step)
     );
+  }
+
+  private stanceAt(secondsAhead: number): LegStance {
+    const offset =
+      secondsAhead === 0
+        ? this.stance.position
+        : this.crouchOffset(vec2.create(), secondsAhead, this.jumpCharge(secondsAhead));
+    const center = vec2.add(vec2.create(), this.body.pos, offset);
+    vec2.scaleAndAdd(center, center, this.body.vel, secondsAhead);
     const extension = legConfig.restExtension - vec2.length(offset);
     return {
-      center: vec2.add(vec2.create(), this.body.pos, offset),
+      center,
       restLength: shellRadius + extension,
       minReach: minLegReach,
       maxReach: shellRadius + legConfig.maxExtension * (extension / legConfig.restExtension)
     };
+  }
+
+  private placeFeet(
+    stance: LegStance,
+    edges: GroundEdge[],
+    gripSeconds: number,
+    dt: number
+  ) {
+    const rollRate = this.groundSpeed / this.body.radius;
+    const requests = this.support
+      ? this.legs.map((leg, i) => {
+          const angle = this.shell.rotation + i * legSpacing;
+          const planted = leg.foot.kind === "planted" ? leg.foot : undefined;
+          const stepTime = planted ? foot.stepSeconds : (leg.step?.remaining ?? 0);
+          const touchdown = Math.max(0, stepTime - dt);
+          const holdTime = touchdown + gripSeconds;
+          return {
+            current: { stance, angle },
+            landing: {
+              stance: touchdown ? this.stanceAt(touchdown) : stance,
+              angle: angle + rollRate * touchdown
+            },
+            hold: { stance: this.stanceAt(holdTime), angle: angle + rollRate * holdTime },
+            previous: leg.foot.kind === "reaching" ? leg.foot.anchor : undefined,
+            grip: planted && { ...planted, travel: foot.slideSpeed * dt }
+          };
+        })
+      : [];
+    const plan = planFootholds(edges, requests);
+    for (const [i, leg] of this.legs.entries()) {
+      const contact = plan[i];
+      if (leg.foot.kind === "planted") {
+        if (contact?.gripping) {
+          leg.foot.anchor = contact.anchor;
+          Object.assign(leg, plantedPose(stance.center, contact.anchor));
+          continue;
+        }
+        if (this.support) leg.step = { from: leg.foot.anchor, remaining: foot.stepSeconds };
+      }
+      if (leg.step) {
+        leg.step.remaining -= dt;
+        if (!this.support || leg.step.remaining <= 0) leg.step = null;
+      }
+      if (contact) leg.foot = { kind: "reaching", anchor: contact.anchor };
+      else if (leg.foot.kind !== "free") {
+        const angle = this.shell.rotation + i * legSpacing;
+        leg.foot = {
+          kind: "free",
+          offset: angleDifference(angle, leg.angle),
+          angularVelocity: 0
+        };
+      }
+    }
   }
 
   private updateFeet(dt: number, ground: GroundPolygon[], stance: LegStance) {
@@ -312,57 +389,48 @@ export class Player implements Entity {
       (1 - foot.foldedScale) * (1 / foot.unfoldSeconds + rollRate / legSpacing) * dt;
     const shake = this.shell.position;
     const swingCenter = vec2.add(vec2.create(), stance.center, shake);
+    // Look one step beyond touchdown, or a fraction of a stride at higher speeds.
+    const gripAngle = legSpacing * foot.gripCheckSpacingFraction;
+    const gripSeconds =
+      rollRate > 0 ? Math.min(foot.stepSeconds, gripAngle / rollRate) : foot.stepSeconds;
+    const searchReach =
+      shellRadius + legConfig.maxExtension + foot.height + halfSole + vec2.length(shake);
     const edges = nearbyEdges(
-      stance.center,
-      stance.maxReach + foot.height + halfSole + vec2.length(shake),
+      this.body.pos,
+      searchReach + speed * (foot.stepSeconds + gripSeconds),
       ground
     );
-    const contacts = this.legs.map((leg, i) => {
-      const restAngle = this.shell.rotation + i * legSpacing;
-      if (
-        this.support &&
-        leg.foot.kind !== "free" &&
-        reachable(stance, leg.foot.anchor, restAngle, maxLegAngle, edges)
-      ) {
-        if (leg.foot.kind === "planted")
-          Object.assign(leg, plantedPose(stance.center, leg.foot.anchor));
-        return leg.foot.anchor;
-      }
-      const anchor = this.support
-        ? findFoothold(stance, restAngle, maxLegAngle, this.body.radius, edges)
-        : null;
-      if (anchor) leg.foot = { kind: "reaching", anchor };
-      else if (leg.foot.kind !== "free")
-        leg.foot = {
-          kind: "free",
-          offset: angleDifference(restAngle, leg.angle),
-          angularVelocity: 0
-        };
-      return anchor;
-    });
+    this.placeFeet(stance, edges, gripSeconds, dt);
     const offsets = spacingOffsets(this.legs, this.shell.rotation);
     for (const [i, leg] of this.legs.entries()) {
-      const anchor = contacts[i];
-      const room = anchor ? padHalfWidth(anchor, contacts) : halfSole;
-      leg.soleHalfWidth = Math.min(
-        room,
-        approach(leg.soleHalfWidth, anchor ? room : foldedHalfSole, halfSole * scaleStep)
-      );
       if (leg.foot.kind === "planted") continue;
-      leg.footScale = approach(leg.footScale, anchor ? 1 : foot.foldedScale, scaleStep);
+      const step = leg.step;
+      const progress = step ? 1 - step.remaining / foot.stepSeconds : 1;
+      const lift = step ? Math.sin(Math.PI * progress) : 0;
+      const scale =
+        leg.foot.kind === "reaching" ? lerp(1, foot.foldedScale, lift) : foot.foldedScale;
+      leg.footScale = approach(leg.footScale, scale, scaleStep);
       let target: Pose;
       if (leg.foot.kind === "free") {
         const offset = settleSpacing(leg.foot, offsets[i], dt);
-        leg.angle = this.shell.rotation + i * legSpacing + offset;
-        target = { angle: leg.angle, length: stance.restLength, footAngle: leg.angle };
+        const angle = this.shell.rotation + i * legSpacing + offset;
+        target = { angle, length: stance.restLength, footAngle: angle };
       } else {
         target = plantedPose(stance.center, leg.foot.anchor);
-        leg.angle = approachAngle(
-          leg.angle,
-          target.angle,
-          (legConfig.swingSpeed + rollRate) * dt
-        );
       }
+      if (step) {
+        target = stepPose(
+          plantedPose(swingCenter, step.from),
+          target,
+          progress,
+          foot.stepHeight * lift
+        );
+        target.length = Math.min(target.length, stance.maxReach);
+      }
+      leg.angle =
+        leg.foot.kind === "free"
+          ? target.angle
+          : approachAngle(leg.angle, target.angle, (legConfig.swingSpeed + rollRate) * dt);
       leg.length = approach(
         leg.length,
         target.length,
@@ -375,12 +443,14 @@ export class Player implements Entity {
       );
       if (
         leg.foot.kind === "reaching" &&
+        !leg.step &&
         leg.footScale === 1 &&
         Math.abs(angleDifference(leg.angle, target.angle)) < 0.0001 &&
         Math.abs(leg.length - target.length) < 0.0001 &&
         Math.abs(angleDifference(leg.footAngle, target.footAngle)) < 0.0001
       ) {
-        leg.foot = { kind: "planted", anchor: leg.foot.anchor };
+        const { anchor } = leg.foot;
+        leg.foot = { kind: "planted", anchor, plantedOffset: anchor.offset };
       } else {
         clearSwing(swingCenter, leg, edges);
       }

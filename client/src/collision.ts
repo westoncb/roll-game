@@ -86,3 +86,22 @@ export function segmentCrossesEdge(a: vec2, b: vec2, edge: GroundEdge) {
   const u = (ax * dy - ay * dx) / cross;
   return t > 0 && t < 1 && u >= 0 && u <= 1;
 }
+
+/** Clip a terrain segment against the interior of a clockwise convex polygon (canvas coordinates). */
+export function edgeIntersectsConvexPolygon(edge: GroundEdge, vertices: vec2[]) {
+  let enter = 0;
+  let exit = 1;
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i],
+      b = vertices[(i + 1) % vertices.length];
+    const dx = b[0] - a[0],
+      dy = b[1] - a[1];
+    const start = dx * (edge.a[1] - a[1]) - dy * (edge.a[0] - a[0]);
+    const end = dx * (edge.b[1] - a[1]) - dy * (edge.b[0] - a[0]);
+    if (start < 0 && end < 0) return false;
+    if (start < 0) enter = Math.max(enter, start / (start - end));
+    if (end < 0) exit = Math.min(exit, start / (start - end));
+    if (enter > exit) return false;
+  }
+  return true;
+}
