@@ -28,3 +28,15 @@ export function approach(value: number, target: number, maxChange: number) {
 export function approachAngle(angle: number, target: number, maxChange: number) {
   return approach(angle, angle + angleDifference(angle, target), maxChange);
 }
+
+/** Largest size that fits when increasing the size can only decrease clearance. */
+export function largestFit(min: number, max: number, fits: (size: number) => boolean) {
+  if (fits(max)) return max;
+  if (!fits(min)) return null;
+  for (let i = 0; i < 10; i++) {
+    const mid = (min + max) / 2;
+    if (fits(mid)) min = mid;
+    else max = mid;
+  }
+  return min;
+}
