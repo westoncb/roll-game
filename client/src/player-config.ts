@@ -3,7 +3,15 @@ import { tau } from "./util";
 // Distances are in world units, angles in radians, and times in seconds.
 export const playerConfig = {
   shell: { size: 30, cornerRadius: 2, borderWidth: 1.5 },
-  hexagon: { radius: 10, borderWidth: 1.25 },
+  screen: {
+    width: 24,
+    height: 21,
+    cornerRadius: 4,
+    borderWidth: 1.25,
+    settleSpeed: 18,
+    settleSeconds: 0.2,
+    turnSpeed: 6
+  },
   leg: {
     count: 10,
     // Extensions are measured from the shell's outer corner radius to the ankle.
@@ -71,8 +79,8 @@ export const playerConfig = {
     metalBorder: ["#94989c", "#ffffff"],
     footFill: ["#d63d41", "#ff8889"],
     footBorder: ["#82272d", "#db5159"],
-    hexagonFill: ["#000000", "#ff0000"],
-    hexagonBorder: ["#929ba1", "#ffb4a8"]
+    screenFill: ["#08201c", "#c52b35"],
+    screenBorder: ["#a1b0ae", "#ffb4a8"]
   }
 } as const;
 

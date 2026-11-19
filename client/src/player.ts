@@ -16,6 +16,7 @@ import {
 } from "./foothold";
 import type { GroundEdge, GroundPolygon } from "./ground";
 import type { InputState } from "./input";
+import { PlayerScreen } from "./player-screen";
 import { PlayerGun, type CastBeam } from "./player-gun";
 import type { EffectPlayer } from "./particles/system";
 import { collectContacts, gravityAt, stepPhysics, PhysicsBody } from "./physics";
@@ -39,7 +40,7 @@ import {
 } from "./walking";
 import { angleDifference, approach, approachAngle, largestFit, lerp, tau } from "./util";
 
-const { leg: legConfig, foot, shell, hexagon, movement, jump, colors } = playerConfig;
+const { leg: legConfig, foot, shell, movement, jump, colors } = playerConfig;
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.
 const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 
@@ -139,7 +140,7 @@ export class Player implements Entity {
   );
   private readonly gun = new PlayerGun(this.visual, this.stance);
   private readonly shell = new Drawable2D(drawShell, this.stance);
-  private readonly chargeIndicator = new Drawable2D(drawHexagon, this.shell);
+  private readonly screen = new PlayerScreen(this.shell);
   private displayedCharge?: number;
 
   constructor(
@@ -178,7 +179,7 @@ export class Player implements Entity {
       : Math.min(1, this.jumpHeldSeconds / jump.fullChargeSeconds);
   }
 
-  private pushOffDirection(support: Support) {
+  private plantedNormal() {
     const normals: vec2[] = [];
     const sum = vec2.create();
     for (const { foot } of this.legs) {
@@ -189,9 +190,11 @@ export class Player implements Entity {
       normals.push(normal);
       vec2.add(sum, sum, normal);
     }
-    return vec2.length(sum) > 0.0001
-      ? vec2.normalize(sum, sum)
-      : surfaceNormal(support, this.body.radius);
+    return vec2.length(sum) > 0.0001 ? vec2.normalize(sum, sum) : null;
+  }
+
+  private pushOffDirection(support: Support) {
+    return this.plantedNormal() ?? surfaceNormal(support, this.body.radius);
   }
 
   private get strideScale() {
@@ -258,9 +261,9 @@ export class Player implements Entity {
     const footColors = { fill: tint(colors.footFill), stroke: tint(colors.footBorder) };
     for (const ankle of this.ankles) ankle.color = footColors;
     for (const joint of this.joints) joint.color = this.shell.color;
-    this.chargeIndicator.color = {
-      fill: tint(colors.hexagonFill),
-      stroke: tint(colors.hexagonBorder)
+    this.screen.color = {
+      fill: tint(colors.screenFill),
+      stroke: tint(colors.screenBorder)
     };
   }
 
@@ -382,6 +385,16 @@ export class Player implements Entity {
     this.gun.update(this.castBeam, dt);
     this.updateFeet(dt, ground);
     this.poseAnkles();
+    const speed = vec2.length(this.body.vel);
+    const normal =
+      this.support && speed <= playerConfig.screen.settleSpeed
+        ? this.plantedNormal()
+        : null;
+    const feet = this.legs.reduce(
+      (count, leg) => count + Number(leg.foot.kind === "planted"),
+      0
+    );
+    this.screen.update(dt, this.jumpCharge(), speed, feet, normal);
   }
 
   private updateCrouch(dt: number, legs: GripRequest[], edges: GroundEdge[]) {
@@ -634,19 +647,5 @@ function drawShell(ctx: CanvasRenderingContext2D) {
   );
   ctx.fill();
   ctx.lineWidth = shell.borderWidth;
-  ctx.stroke();
-}
-
-function drawHexagon(ctx: CanvasRenderingContext2D) {
-  const { radius } = hexagon;
-  ctx.beginPath();
-  ctx.moveTo(radius, 0);
-  for (let i = 1; i < 6; i++) {
-    const angle = (i * tau) / 6;
-    ctx.lineTo(radius * Math.cos(angle), radius * Math.sin(angle));
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.lineWidth = hexagon.borderWidth;
   ctx.stroke();
 }
