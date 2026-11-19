@@ -1,4 +1,5 @@
 import { vec2 } from "gl-matrix";
+import { gameAssets } from "./assets";
 import { nearbyEdges } from "./collision";
 import { Drawable2D } from "./drawable";
 import type { Entity } from "./entity";
@@ -7,6 +8,7 @@ import {
   planFootholds,
   plantedPose,
   poseFits,
+  soleAt,
   type FootAnchor,
   type GripRequest,
   type LegStance,
@@ -14,6 +16,7 @@ import {
 } from "./foothold";
 import type { GroundEdge, GroundPolygon } from "./ground";
 import type { InputState } from "./input";
+import type { EffectPlayer } from "./particles/system";
 import { collectContacts, gravityAt, stepPhysics, PhysicsBody } from "./physics";
 import {
   halfSole,
@@ -40,7 +43,7 @@ const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 type FreeFoot = { kind: "free"; offset: number; angularVelocity: number };
 type FootState =
   | FreeFoot
-  | { kind: "reaching"; anchor: FootAnchor }
+  | { kind: "reaching"; anchor: FootAnchor; landingVelocity?: vec2 }
   | { kind: "planted"; anchor: FootAnchor; plantedOffset: number };
 type FootStep = { from: FootAnchor; remaining: number };
 // Angles are in world coordinates. The leg index identifies its part of the rotating body.
@@ -114,6 +117,8 @@ export class Player implements Entity {
   private wallRight = 0;
   private jumpHeldSeconds: number | null = null;
   private launchCharge: number | null = null;
+  private jumping = false;
+  private landingVelocity?: vec2;
   private groundSpeed = 0;
   readonly visual = new Drawable2D();
   readonly body = new PhysicsBody(this.visual.position, rollRadius);
@@ -127,7 +132,11 @@ export class Player implements Entity {
   private readonly chargeIndicator = new Drawable2D(drawHexagon, this.shell);
   private displayedCharge?: number;
 
-  constructor(start: vec2, ground: GroundPolygon[]) {
+  constructor(
+    start: vec2,
+    ground: GroundPolygon[],
+    private readonly particles: EffectPlayer
+  ) {
     vec2.copy(this.visual.position, start);
     this.setChargeColors(0);
     collectContacts(this.body, ground);
@@ -280,6 +289,7 @@ export class Player implements Entity {
           ? vec2.scale(vec2.create(), offset, -1 / depth)
           : this.pushOffDirection(this.support);
       vec2.scaleAndAdd(body.vel, body.vel, direction, launchSpeed);
+      this.jumping = true;
       this.support = null;
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;
@@ -312,11 +322,17 @@ export class Player implements Entity {
       const hit = contacts.reduce((deepest, contact) =>
         contact.depth > deepest.depth ? contact : deepest
       );
-      if (vec2.dot(this.body.vel, hit.normal) <= 0)
+      const normalSpeed = vec2.dot(this.body.vel, hit.normal);
+      if (normalSpeed <= 0) {
         this.support = supportFromContact(hit, this.body.radius);
+        if (this.jumping) {
+          this.jumping = false;
+          this.landingVelocity = vec2.clone(this.body.vel);
+        }
+      }
       if (hit.depth < 0.0001) return;
       vec2.scaleAndAdd(this.body.pos, this.body.pos, hit.normal, hit.depth);
-      const inward = Math.min(0, vec2.dot(this.body.vel, hit.normal));
+      const inward = Math.min(0, normalSpeed);
       vec2.scaleAndAdd(this.body.vel, this.body.vel, hit.normal, -inward);
       collectContacts(this.body, ground);
     }
@@ -410,8 +426,13 @@ export class Player implements Entity {
         leg.step.remaining -= dt;
         if (!this.support || leg.step.remaining <= 0) leg.step = null;
       }
-      if (contact) leg.foot = { kind: "reaching", anchor: contact.anchor };
-      else if (leg.foot.kind !== "free") {
+      if (contact) {
+        // Feet assigned at impact carry the incoming velocity until they plant or lose the reach.
+        const landingVelocity =
+          this.landingVelocity ??
+          (leg.foot.kind === "reaching" ? leg.foot.landingVelocity : undefined);
+        leg.foot = { kind: "reaching", anchor: contact.anchor, landingVelocity };
+      } else if (leg.foot.kind !== "free") {
         const angle = this.shell.rotation + i * legSpacing;
         leg.foot = {
           kind: "free",
@@ -420,6 +441,7 @@ export class Player implements Entity {
         };
       }
     }
+    this.landingVelocity = undefined;
     return stance;
   }
 
@@ -490,8 +512,21 @@ export class Player implements Entity {
         Math.abs(leg.length - target.length) < 0.0001 &&
         Math.abs(angleDifference(leg.footAngle, target.footAngle)) < 0.0001
       ) {
-        const { anchor } = leg.foot;
+        const { anchor, landingVelocity } = leg.foot;
         leg.foot = { kind: "planted", anchor, plantedOffset: anchor.offset };
+        if (landingVelocity) {
+          const { edge, offset } = anchor;
+          const impactSpeed = Math.max(0, -vec2.dot(landingVelocity, edge.normal));
+          this.particles.play(
+            gameAssets.particles.get("landing-dust"),
+            {
+              kind: "world",
+              position: soleAt(edge, offset),
+              angle: Math.atan2(edge.normal[1], edge.normal[0])
+            },
+            { strength: Math.min(1, impactSpeed / jump.fullSpeed) }
+          );
+        }
       } else {
         clearSwing(swingCenter, leg, edges);
       }

@@ -31,7 +31,11 @@ export class Level {
           polygon.gravityScale ?? 1
         )
     );
-    this.player = new Player(vec2.fromValues(...data.playerStart), this.ground);
+    this.player = new Player(
+      vec2.fromValues(...data.playerStart),
+      this.ground,
+      this.particles
+    );
     this.entities = [this.player];
   }
 

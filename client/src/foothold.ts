@@ -21,8 +21,12 @@ export type LegStance = {
   landingReach: number;
 };
 
+export function soleAt(edge: GroundEdge, offset: number) {
+  return vec2.scaleAndAdd(vec2.create(), edge.a, edge.tangent, offset);
+}
+
 function ankleAt(edge: GroundEdge, offset: number) {
-  const ankle = vec2.scaleAndAdd(vec2.create(), edge.a, edge.tangent, offset);
+  const ankle = soleAt(edge, offset);
   return vec2.scaleAndAdd(ankle, ankle, edge.normal, foot.height);
 }
 
@@ -126,7 +130,7 @@ function foothold(
     anchor: { edge, offset },
     gripping,
     effort,
-    sole: vec2.scaleAndAdd(vec2.create(), edge.a, edge.tangent, offset)
+    sole: soleAt(edge, offset)
   };
 }
 
