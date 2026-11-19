@@ -79,7 +79,8 @@ export const playerConfig = {
     metalBorder: ["#94989c", "#ffffff"],
     footFill: ["#d63d41", "#ff8889"],
     footBorder: ["#82272d", "#db5159"],
-    screenFill: ["#08201c", "#c52b35"],
+    screenIdleFill: "#08201c",
+    screenChargeFill: ["#ce3943", "#ed4952"],
     screenBorder: ["#a1b0ae", "#ffb4a8"]
   }
 } as const;

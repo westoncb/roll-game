@@ -263,7 +263,7 @@ export class Player implements Entity {
     for (const ankle of this.ankles) ankle.color = footColors;
     for (const joint of this.joints) joint.color = this.shell.color;
     this.screen.color = {
-      fill: tint(colors.screenFill),
+      fill: charge > 0 ? tint(colors.screenChargeFill) : colors.screenIdleFill,
       stroke: tint(colors.screenBorder)
     };
   }

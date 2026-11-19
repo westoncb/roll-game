@@ -6,7 +6,18 @@ import { approachAngle, tau } from "./util";
 
 const { screen } = playerConfig;
 const characterSeconds = 0.12;
-const landingGrinSeconds = 1;
+const staticHoldSeconds = 0.5;
+const staticFadeSeconds = 1;
+const staticColors = [
+  "#172238",
+  "#30325a",
+  "#276a7b",
+  "#69d7d4",
+  "#885ac4",
+  "#ec69a1",
+  "#ffc885",
+  "#d7ece5"
+];
 
 type ScreenInput = {
   airborne: boolean;
@@ -16,7 +27,7 @@ type ScreenInput = {
   plantedNormal: vec2 | null;
 };
 
-type ScreenMode = "terminal" | "sight" | "chargeGrin" | "flightGrin";
+type ScreenMode = "terminal" | "sight" | "chargeGrin" | "flightStatic";
 
 export class PlayerScreen extends Drawable2D {
   private previousLine = ">SYS";
@@ -24,7 +35,7 @@ export class PlayerScreen extends Drawable2D {
   private lineTime = 0;
   private mode: ScreenMode = "terminal";
   private time = 0;
-  private grinUntil = 0;
+  private lastAirTime = -Infinity;
   private settledSeconds = 0;
   private contentAngle = 0;
 
@@ -40,7 +51,7 @@ export class PlayerScreen extends Drawable2D {
 
   update(dt: number, { airborne, charging, speed, feet, plantedNormal }: ScreenInput) {
     this.time += dt;
-    if (airborne) this.grinUntil = this.time + landingGrinSeconds;
+    if (airborne) this.lastAirTime = this.time;
     this.mode = this.displayMode(charging);
     this.lineTime += dt;
     // Leave a short pause after the final character before scrolling the line up.
@@ -64,15 +75,17 @@ export class PlayerScreen extends Drawable2D {
   private displayMode(charging: boolean): ScreenMode {
     if (charging) return "chargeGrin";
     const phase = this.gun.phase;
-    if (this.time < this.grinUntil && (phase === "idle" || phase === "pulling"))
-      return "flightGrin";
+    if (
+      this.time - this.lastAirTime < staticHoldSeconds + staticFadeSeconds &&
+      (phase === "idle" || phase === "pulling")
+    )
+      return "flightStatic";
     return phase === "idle" ? "terminal" : "sight";
   }
 
   private drawScreen(ctx: CanvasRenderingContext2D) {
     const { width, height, cornerRadius, borderWidth } = screen;
-    if (this.mode === "flightGrin")
-      ctx.fillStyle = `hsl(${(165 + 210 * this.time) % 360} 73% 62%)`;
+    if (this.mode === "flightStatic") ctx.fillStyle = "#000";
     else if (this.mode === "sight") ctx.fillStyle = "#0c293a";
     ctx.beginPath();
     ctx.roundRect(-width / 2, -height / 2, width, height, cornerRadius);
@@ -80,8 +93,14 @@ export class PlayerScreen extends Drawable2D {
     ctx.lineWidth = borderWidth;
     ctx.stroke();
     ctx.clip();
+    if (this.mode === "flightStatic") {
+      const fadeTime = Math.max(0, this.time - this.lastAirTime - staticHoldSeconds);
+      ctx.globalAlpha *= 1 - fadeTime / staticFadeSeconds;
+      drawStatic(ctx, Math.floor(this.time * 14));
+      return;
+    }
     ctx.rotate(this.contentAngle);
-    if (this.mode === "flightGrin" || this.mode === "chargeGrin") {
+    if (this.mode === "chargeGrin") {
       drawGrin(ctx);
     } else if (this.mode === "sight") {
       const matrix = this.renderWorldMatrix;
@@ -98,6 +117,24 @@ export class PlayerScreen extends Drawable2D {
       ctx.fillStyle = "#abffcf";
       ctx.fillText(this.line.slice(0, count), -8.4, 5.6);
       if (count < this.line.length) ctx.fillRect(-8.4 + count * 4.2, 5.6, 3.1, 1);
+    }
+  }
+}
+
+function drawStatic(ctx: CanvasRenderingContext2D, frame: number) {
+  // Repainting the same TV frame should reproduce the same noise.
+  let seed = Math.imul(frame + 1, 2654435761);
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+  const { width, height } = screen;
+  for (let y = -height / 2; y < height / 2; y += 2) {
+    for (let x = -width / 2; x < width / 2; ) {
+      const run = 1 + Math.floor(random() * 4);
+      ctx.fillStyle = staticColors[Math.floor(random() * staticColors.length)];
+      ctx.fillRect(x, y, run, 1.5);
+      x += run;
     }
   }
 }
