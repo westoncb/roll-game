@@ -1,4 +1,4 @@
-import type { vec2 } from "gl-matrix";
+import { vec2 } from "gl-matrix";
 import { Drawable2D } from "./drawable";
 import { playerConfig } from "./player-config";
 import type { PlayerGun } from "./player-gun";
@@ -21,6 +21,9 @@ export class PlayerScreen extends Drawable2D {
     private readonly gun: PlayerGun
   ) {
     super((ctx) => this.drawScreen(ctx), shell);
+    // The TV and its artwork share a coordinate system sized for a 30-unit shell.
+    const scale = playerConfig.shell.size / 30;
+    vec2.set(this.scale, scale, scale);
   }
 
   update(

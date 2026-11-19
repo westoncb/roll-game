@@ -2,7 +2,7 @@ import { tau } from "./util";
 
 // Distances are in world units, angles in radians, and times in seconds.
 export const playerConfig = {
-  shell: { size: 30, cornerRadius: 2, borderWidth: 1.5 },
+  shell: { size: 39.675, cornerRadius: 2, borderWidth: 1.5 },
   screen: {
     width: 24,
     height: 21,
@@ -18,8 +18,8 @@ export const playerConfig = {
     // The minimum leaves room for the shell to shake around a planted leg.
     minExtension: 3,
     chargedExtension: 3,
-    restExtension: 9,
-    maxExtension: 24,
+    restExtension: 7,
+    maxExtension: 20,
     width: 4,
     borderWidth: 0.875,
     extensionSpeed: 175,
