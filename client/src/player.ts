@@ -155,6 +155,22 @@ export class Player implements Entity {
       : Math.min(1, this.jumpHeldSeconds / jump.fullChargeSeconds);
   }
 
+  private pushOffDirection(support: Support) {
+    const normals: vec2[] = [];
+    const sum = vec2.create();
+    for (const { foot } of this.legs) {
+      if (foot.kind !== "planted") continue;
+      const normal = foot.anchor.edge.normal;
+      // Each direction contributes once, even if several feet or edges share it.
+      if (normals.some((other) => vec2.equals(other, normal))) continue;
+      normals.push(normal);
+      vec2.add(sum, sum, normal);
+    }
+    return vec2.length(sum) > 0.0001
+      ? vec2.normalize(sum, sum)
+      : surfaceNormal(support, this.body.radius);
+  }
+
   private get strideScale() {
     return lerp(1, jump.chargedSpeedScale, this.launchCharge ?? this.jumpCharge());
   }
@@ -252,7 +268,14 @@ export class Player implements Entity {
       }
       vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
       const launchSpeed = lerp(jump.tapSpeed, jump.fullSpeed, this.launchCharge);
-      vec2.scaleAndAdd(body.vel, body.vel, normal, launchSpeed);
+      // Push back along the crouch the grips actually allowed. A tap can have no pose yet.
+      const offset = this.stance.position;
+      const depth = vec2.length(offset);
+      const direction =
+        this.launchCharge > 0 && depth > 0.0001
+          ? vec2.scale(vec2.create(), offset, -1 / depth)
+          : this.pushOffDirection(this.support);
+      vec2.scaleAndAdd(body.vel, body.vel, direction, launchSpeed);
       this.support = null;
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;
@@ -303,8 +326,7 @@ export class Player implements Entity {
   private updateCrouch(dt: number, legs: GripRequest[], edges: GroundEdge[]) {
     const charge = this.jumpCharge();
     const depth = (legConfig.restExtension - legConfig.chargedExtension) * charge;
-    const normal =
-      depth > 0 && this.support ? surfaceNormal(this.support, this.body.radius) : [0, 0];
+    const normal = depth > 0 && this.support ? this.pushOffDirection(this.support) : [0, 0];
     const offset = this.stance.position;
     const step = legConfig.extensionSpeed * dt;
     const target = vec2.fromValues(
