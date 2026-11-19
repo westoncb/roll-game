@@ -195,13 +195,15 @@ export function advanceAlongSurface(
       if (remaining <= 0.000001) break;
       support = adjacent(reached, direction, radius);
     }
-    // Project incoming velocity onto the outgoing tangent at the actual join.
-    // Rounded corners have a continuous tangent; an inside right angle costs all speed.
-    const incoming = surfacePose(reached, radius).normal;
-    const outgoing = surfacePose(support, radius).normal;
-    const alignment = Math.max(0, Math.min(1, vec2.dot(incoming, outgoing)));
-    retainedSpeed *= alignment;
-    remaining *= alignment;
+    // The length of the average unit normal is cos(turn / 2), including zero at a reversal.
+    const incoming = surfaceNormal(reached, radius);
+    const outgoing = surfaceNormal(support, radius);
+    const carry = Math.min(
+      1,
+      Math.hypot(incoming[0] + outgoing[0], incoming[1] + outgoing[1]) / 2
+    );
+    retainedSpeed *= carry;
+    remaining *= carry;
   }
   if (remaining > 0.000001) retainedSpeed = 0;
   return { support, travel: direction * travelled, retainedSpeed };
