@@ -40,6 +40,10 @@ export class PlayerGun {
   get phase() {
     return this.shot.kind;
   }
+  get renderAngle() {
+    const matrix = this.pivot.renderWorldMatrix;
+    return Math.atan2(matrix[1], matrix[0]);
+  }
   get anchor() {
     return this.shot.kind === "pulling" ? this.shot.hit : null;
   }

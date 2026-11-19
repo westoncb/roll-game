@@ -140,7 +140,7 @@ export class Player implements Entity {
   );
   private readonly gun = new PlayerGun(this.visual, this.stance);
   private readonly shell = new Drawable2D(drawShell, this.stance);
-  private readonly screen = new PlayerScreen(this.shell);
+  private readonly screen = new PlayerScreen(this.shell, this.gun);
   private displayedCharge?: number;
 
   constructor(
