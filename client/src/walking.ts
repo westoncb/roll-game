@@ -1,11 +1,13 @@
 import { vec2 } from "gl-matrix";
-import { nearestBoundary, type GroundContact } from "./collision";
+import { nearbyEdges, nearestBoundary, type GroundContact } from "./collision";
 import type { GroundEdge, GroundPolygon } from "./ground";
-import { angleDifference } from "./util";
+import { angleDifference, closestPointOnSegment } from "./util";
 
 // An edge offset is measured along its tangent. A corner offset is measured
 // along the circular arc at edge.a, starting from the preceding face.
 export type Support = { kind: "edge" | "corner"; edge: GroundEdge; offset: number };
+
+const clearanceTolerance = 0.001;
 
 function neighbor(edge: GroundEdge, direction: number) {
   const edges = edge.ground.edges;
@@ -66,6 +68,58 @@ export function supportFromContact(
   return { kind: "edge", edge, offset: along };
 }
 
+function alongTangent(normal: vec2, vector: vec2) {
+  return -normal[1] * vector[0] + normal[0] * vector[1];
+}
+
+export function steerAlongSurface(
+  support: Support,
+  input: vec2,
+  center: vec2,
+  radius: number,
+  ground: GroundPolygon[],
+  atRest: boolean
+) {
+  const normal = surfaceNormal(support, radius);
+  const drive = alongTangent(normal, input);
+  if (!atRest) return { support, drive };
+
+  // At a junction the resting collider can touch several paths, even on one polygon.
+  const paths = [{ support, normal }];
+  const point = vec2.create();
+  for (const edge of nearbyEdges(center, radius + clearanceTolerance, ground)) {
+    if (edge === support.edge) continue;
+    closestPointOnSegment(point, center, edge.a, edge.b);
+    const radial = vec2.subtract(vec2.create(), center, point);
+    if (Math.abs(vec2.length(radial) - radius) > clearanceTolerance) continue;
+    const next = supportFromContact(
+      {
+        ground: edge.ground,
+        edgeIndex: edge.index,
+        point,
+        normal: vec2.normalize(radial, radial)
+      },
+      radius
+    );
+    paths.push({ support: next, normal: surfaceNormal(next, radius) });
+  }
+  let best = { support, drive: 0 };
+  let strength = -1;
+  for (const path of paths) {
+    const projected = alongTangent(path.normal, input);
+    if (Math.abs(projected) <= strength) continue;
+    // Only consider travel that clears every other touching surface.
+    const direction = Math.sign(projected);
+    if (
+      paths.some((other) => direction * alongTangent(path.normal, other.normal) < -0.000001)
+    )
+      continue;
+    best = { support: path.support, drive: projected };
+    strength = Math.abs(projected);
+  }
+  return best;
+}
+
 function adjacent(support: Support, direction: number, radius: number): Support {
   const { edge, kind } = support;
   let next: Support;
@@ -94,7 +148,6 @@ export function advanceAlongSurface(
   let remaining = Math.abs(distance);
   let travelled = 0;
   let retainedSpeed = 1;
-  const clearanceTolerance = 0.001;
   // A fixed tick usually stays on one feature. The bound also handles pinched passages.
   for (let transitions = 0; remaining > 0.000001 && transitions < 32; transitions++) {
     const [start, end] = limits(support, radius);

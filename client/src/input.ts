@@ -16,7 +16,14 @@ export function listenForInput(
 ): () => void {
   const controller = new AbortController();
   const options = { signal: controller.signal };
-  const gameKeys = new Set(["ArrowLeft", "ArrowRight", "Space", "KeyF"]);
+  const gameKeys = new Set([
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "ArrowDown",
+    "Space",
+    "KeyF"
+  ]);
 
   canvas.addEventListener(
     "keydown",

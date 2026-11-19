@@ -29,6 +29,7 @@ import {
 } from "./player-config";
 import {
   advanceAlongSurface,
+  steerAlongSurface,
   supportFromContact,
   surfaceNormal,
   surfacePose,
@@ -112,7 +113,7 @@ export class Player implements Entity {
     foot: { kind: "free", offset: 0, angularVelocity: 0 }
   }));
   support: Support | null = null;
-  private moveInput = 0;
+  private readonly moveInput = vec2.create();
   // Signed path direction for Right on a wall; zero uses screen-space steering.
   private wallRight = 0;
   private jumpHeldSeconds: number | null = null;
@@ -188,8 +189,11 @@ export class Player implements Entity {
   }
 
   control(input: InputState, dt: number) {
-    this.moveInput =
-      Number(input.keysDown.has("ArrowRight")) - Number(input.keysDown.has("ArrowLeft"));
+    vec2.set(
+      this.moveInput,
+      Number(input.keysDown.has("ArrowRight")) - Number(input.keysDown.has("ArrowLeft")),
+      Number(input.keysDown.has("ArrowDown")) - Number(input.keysDown.has("ArrowUp"))
+    );
     const previousStride = this.strideScale;
     this.launchCharge = null;
     if (this.support) {
@@ -246,7 +250,19 @@ export class Player implements Entity {
     if (this.support) {
       const normal = surfaceNormal(this.support, body.radius);
       const tangentX = -normal[1];
-      const drive = this.moveInput * (this.wallRight || tangentX);
+      let drive = this.moveInput[0] * (this.wallRight || tangentX);
+      if (this.moveInput[1]) {
+        const steering = steerAlongSurface(
+          this.support,
+          this.moveInput,
+          body.pos,
+          body.radius,
+          ground,
+          this.groundSpeed === 0 && this.launchCharge === null
+        );
+        this.support = steering.support;
+        drive = Math.max(-1, Math.min(1, steering.drive));
+      }
       const reversing = drive * this.groundSpeed < 0;
       const stride = this.strideScale;
       const targetSpeed = reversing ? 0 : drive * movement.topSpeed * stride;
@@ -307,7 +323,7 @@ export class Player implements Entity {
     if (Math.abs(normal[1]) > movement.wallEnterX) return;
     // For a sliding landing the held key continues the slide. With no key
     // held, assign that motion to the key pointing into the wall.
-    const approachKey = this.moveInput || -Math.sign(normal[0]);
+    const approachKey = this.moveInput[0] || -Math.sign(normal[0]);
     this.wallRight =
       Math.abs(this.groundSpeed) > movement.minLandingSlide
         ? approachKey * Math.sign(this.groundSpeed)
