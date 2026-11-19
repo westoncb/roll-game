@@ -70,7 +70,8 @@ export const playerConfig = {
     retractSpeed: 1150,
     pullSpeed: 710,
     minPullProgressSpeed: 0.1,
-    barrelLength: 36,
+    barrelLength: 45,
+    headLength: 11,
     deploySpeed: 160,
     segmentLength: 13
   },
