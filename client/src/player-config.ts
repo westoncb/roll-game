@@ -68,6 +68,7 @@ const { shell, leg, foot } = playerConfig;
 export const shellRadius = (shell.size + shell.borderWidth) / Math.SQRT2;
 export const restLegLength = shellRadius + leg.restExtension;
 export const minLegReach = shellRadius + leg.minExtension;
+export const maxLegReach = shellRadius + leg.maxExtension;
 // At rest a ground-facing leg and an open pad span the rolling radius.
 export const rollRadius = restLegLength + foot.height;
 export const halfSole = foot.width / 2;

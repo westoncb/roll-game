@@ -1,8 +1,15 @@
 import { vec2 } from "gl-matrix";
 import { edgeIntersectsConvexPolygon, segmentCrossesEdge } from "./collision";
 import type { GroundEdge } from "./ground";
-import { halfSole, maxLegAngle, playerConfig, rollRadius } from "./player-config";
-import { angleDifference } from "./util";
+import {
+  halfSole,
+  maxLegAngle,
+  maxLegReach,
+  minLegReach,
+  playerConfig,
+  rollRadius
+} from "./player-config";
+import { angleDifference, largestFit } from "./util";
 
 const { foot } = playerConfig;
 
@@ -11,8 +18,7 @@ export type Pose = { angle: number; length: number; footAngle: number };
 export type LegStance = {
   center: vec2;
   restLength: number;
-  minReach: number;
-  maxReach: number;
+  landingReach: number;
 };
 
 function ankleAt(edge: GroundEdge, offset: number) {
@@ -78,15 +84,19 @@ function* offsetsNear(aim: number, start: number, end: number) {
   }
 }
 
-function contactRange(stance: LegStance, restAngle: number, edge: GroundEdge) {
+function contactRange(
+  { stance, angle }: LegFrame,
+  edge: GroundEdge,
+  reach = stance.landingReach
+) {
   const fromEdge = vec2.subtract(vec2.create(), stance.center, edge.a);
   const height = vec2.dot(fromEdge, edge.normal) - foot.height;
-  if (height <= 0 || height > stance.maxReach) return null;
+  if (height <= 0 || height > reach) return null;
 
   // Project the leg's angular and length limits onto the line of possible ankles.
   const inward = Math.atan2(-edge.normal[1], -edge.normal[0]);
-  const phase = angleDifference(restAngle, inward);
-  const arc = Math.acos(height / stance.maxReach);
+  const phase = angleDifference(angle, inward);
+  const arc = Math.acos(height / reach);
   const low = Math.max(-arc, phase - maxLegAngle);
   const high = Math.min(arc, phase + maxLegAngle);
   if (low > high) return null;
@@ -145,9 +155,9 @@ function slideIsClear(
 
 type LegFrame = { stance: LegStance; angle: number };
 type Grip = { anchor: FootAnchor; plantedOffset: number; travel: number };
+export type GripRequest = { angle: number; grip?: Grip };
 
-// Holding, sliding and landing all use the same reach and full-sole terrain checks.
-// A landing must fit both at touchdown and a short time into the following stride.
+// A new landing must fit both at touchdown and a short time into the following stride.
 function* optionsOnEdge(
   edge: GroundEdge,
   edges: GroundEdge[],
@@ -156,8 +166,13 @@ function* optionsOnEdge(
   grip?: Grip,
   previous?: FootAnchor
 ): Generator<Foothold> {
-  const range = contactRange(landing.stance, landing.angle, edge);
-  const future = landing === hold ? range : contactRange(hold.stance, hold.angle, edge);
+  // Crouching shortens the reach for a new step. A planted leg can still use its full travel.
+  const range = contactRange(
+    landing,
+    edge,
+    grip ? maxLegReach : landing.stance.landingReach
+  );
+  const future = landing === hold ? range : contactRange(hold, edge);
   if (!range || !future) return;
   let start = Math.max(range.start, future.start),
     end = Math.min(range.end, future.end);
@@ -198,7 +213,7 @@ function* optionsOnEdge(
 function fitsStance(stance: LegStance, anchor: FootAnchor, edges: GroundEdge[]) {
   const pose = plantedPose(stance.center, anchor);
   return (
-    pose.length >= stance.minReach - 0.001 &&
+    pose.length >= minLegReach - 0.001 &&
     poseFits(stance.center, pose, edges, foot.height, halfSole, anchor.edge)
   );
 }
@@ -219,6 +234,40 @@ function overlap(a: Foothold, b: Foothold) {
   return vec2.squaredDistance(a.sole, b.sole) < foot.width ** 2;
 }
 
+function planGrips(edges: GroundEdge[], stance: LegStance, legs: GripRequest[]) {
+  return chooseFootholds(
+    legs.map(({ angle, grip }) => {
+      const frame = { stance, angle };
+      return grip ? [optionsOnEdge(grip.anchor.edge, edges, frame, frame, grip)] : [];
+    })
+  );
+}
+
+export function fitCrouchGrips(
+  edges: GroundEdge[],
+  legs: GripRequest[],
+  stanceAt: (fraction: number) => LegStance
+) {
+  const target = planGrips(edges, stanceAt(1), legs);
+  if (legs.every((leg, i) => !leg.grip || target[i])) return { fraction: 1, held: target };
+
+  // Movement alone may require a step. Protect each grip that survived it, including
+  // those that need to slide. Each trial shares the same per-tick slide budget.
+  const before = planGrips(edges, stanceAt(0), legs);
+  const retainsGrips = (plan: (Foothold | null)[]) =>
+    before.every((foot, i) => !foot || plan[i]);
+  if (retainsGrips(target)) return { fraction: 1, held: target };
+  const required = legs.map((leg, i) => (before[i] ? leg : { angle: leg.angle }));
+  const planAt = (t: number) => planGrips(edges, stanceAt(t), required);
+  const fraction = largestFit(0, 1, (t) => t === 0 || retainsGrips(planAt(t))) ?? 0;
+  return { fraction, held: fraction === 0 ? before : planAt(fraction) };
+}
+
+function* unoccupied(options: Generator<Foothold>, reserved: Foothold[]) {
+  for (const option of options)
+    if (!reserved.some((foot) => overlap(foot, option))) yield option;
+}
+
 function conflict(picks: (Foothold | null)[]) {
   for (const [i, pick] of picks.entries()) {
     if (!pick) continue;
@@ -230,15 +279,25 @@ function conflict(picks: (Foothold | null)[]) {
   return null;
 }
 
-// Choose the most contacts, then keep the most existing grips, then minimize travel.
-export function planFootholds(edges: GroundEdge[], requests: LegRequest[]) {
-  const searches = requests.map(({ current, landing, hold, previous, grip }) => {
+export function planFootholds(
+  edges: GroundEdge[],
+  requests: LegRequest[],
+  held: (Foothold | null)[] = []
+) {
+  const reserved = held.filter((foot) => foot !== null);
+  const searches = requests.map(({ current, landing, hold, previous, grip }, i) => {
+    if (held[i]) return [];
     const faces = edges.map((edge) =>
       optionsOnEdge(edge, edges, landing, hold, undefined, previous)
     );
     if (grip) faces.push(optionsOnEdge(grip.anchor.edge, edges, current, current, grip));
-    return faces;
+    return reserved.length ? faces.map((face) => unoccupied(face, reserved)) : faces;
   });
+  return chooseFootholds(searches).map((foot, i) => held[i] ?? foot);
+}
+
+// Choose the most contacts, then keep the most existing grips, then minimize travel.
+function chooseFootholds(searches: Generator<Foothold>[][]) {
   // Usually the preferred grips fit together. Explore alternate offsets only when feet compete.
   const first = searches.map((faces) =>
     faces
@@ -253,7 +312,7 @@ export function planFootholds(edges: GroundEdge[], requests: LegRequest[]) {
   const options = searches.map((faces, i) =>
     first[i].concat(faces.flatMap((face) => [...face])).sort(preference)
   );
-  let best: (Foothold | null)[] = requests.map(() => null);
+  let best: (Foothold | null)[] = searches.map(() => null);
   let bestCount = 0,
     bestGrips = 0,
     bestEffort = Infinity;

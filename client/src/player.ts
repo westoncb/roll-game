@@ -3,10 +3,12 @@ import { nearbyEdges } from "./collision";
 import { Drawable2D } from "./drawable";
 import type { Entity } from "./entity";
 import {
+  fitCrouchGrips,
   planFootholds,
   plantedPose,
   poseFits,
   type FootAnchor,
+  type GripRequest,
   type LegStance,
   type Pose
 } from "./foothold";
@@ -16,7 +18,7 @@ import { collectContacts, gravityAt, stepPhysics, PhysicsBody } from "./physics"
 import {
   halfSole,
   legSpacing,
-  minLegReach,
+  maxLegReach,
   playerConfig,
   restLegLength,
   rollRadius,
@@ -147,10 +149,10 @@ export class Player implements Entity {
     }
   }
 
-  private jumpCharge(secondsAhead = 0) {
+  private jumpCharge() {
     return this.jumpHeldSeconds === null
       ? 0
-      : Math.min(1, (this.jumpHeldSeconds + secondsAhead) / jump.fullChargeSeconds);
+      : Math.min(1, this.jumpHeldSeconds / jump.fullChargeSeconds);
   }
 
   private get strideScale() {
@@ -294,67 +296,80 @@ export class Player implements Entity {
   }
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
-    this.crouchOffset(this.stance.position, dt, this.jumpCharge());
-    this.updateFeet(dt, ground, this.stanceAt(0));
+    this.updateFeet(dt, ground);
     this.poseAnkles();
   }
 
-  private crouchOffset(out: vec2, dt: number, charge: number) {
+  private updateCrouch(dt: number, legs: GripRequest[], edges: GroundEdge[]) {
+    const charge = this.jumpCharge();
     const depth = (legConfig.restExtension - legConfig.chargedExtension) * charge;
     const normal =
       depth > 0 && this.support ? surfaceNormal(this.support, this.body.radius) : [0, 0];
     const offset = this.stance.position;
     const step = legConfig.extensionSpeed * dt;
-    return vec2.set(
-      out,
+    const target = vec2.fromValues(
       approach(offset[0], -normal[0] * depth, step),
       approach(offset[1], -normal[1] * depth, step)
     );
+    if (charge === 0) {
+      vec2.copy(offset, target);
+      return [];
+    }
+    const probe = vec2.create();
+    const { fraction, held } = fitCrouchGrips(edges, legs, (t) =>
+      this.stanceAt(vec2.lerp(probe, offset, target, t))
+    );
+    vec2.lerp(offset, offset, target, fraction);
+    return held;
   }
 
-  private stanceAt(secondsAhead: number): LegStance {
-    const offset =
-      secondsAhead === 0
-        ? this.stance.position
-        : this.crouchOffset(vec2.create(), secondsAhead, this.jumpCharge(secondsAhead));
+  private stanceAt(offset: vec2, secondsAhead = 0): LegStance {
     const center = vec2.add(vec2.create(), this.body.pos, offset);
     vec2.scaleAndAdd(center, center, this.body.vel, secondsAhead);
     const extension = legConfig.restExtension - vec2.length(offset);
     return {
       center,
       restLength: shellRadius + extension,
-      minReach: minLegReach,
-      maxReach: shellRadius + legConfig.maxExtension * (extension / legConfig.restExtension)
+      landingReach:
+        shellRadius + legConfig.maxExtension * (extension / legConfig.restExtension)
     };
   }
 
-  private placeFeet(
-    stance: LegStance,
-    edges: GroundEdge[],
-    gripSeconds: number,
-    dt: number
-  ) {
+  private placeFeet(edges: GroundEdge[], gripSeconds: number, dt: number) {
     const rollRate = this.groundSpeed / this.body.radius;
-    const requests = this.support
-      ? this.legs.map((leg, i) => {
-          const angle = this.shell.rotation + i * legSpacing;
-          const planted = leg.foot.kind === "planted" ? leg.foot : undefined;
-          const stepTime = planted ? foot.stepSeconds : (leg.step?.remaining ?? 0);
-          const touchdown = Math.max(0, stepTime - dt);
-          const holdTime = touchdown + gripSeconds;
-          return {
-            current: { stance, angle },
-            landing: {
-              stance: touchdown ? this.stanceAt(touchdown) : stance,
-              angle: angle + rollRate * touchdown
-            },
-            hold: { stance: this.stanceAt(holdTime), angle: angle + rollRate * holdTime },
-            previous: leg.foot.kind === "reaching" ? leg.foot.anchor : undefined,
-            grip: planted && { ...planted, travel: foot.slideSpeed * dt }
-          };
-        })
+    const legs = this.support
+      ? this.legs.map((leg, i) => ({
+          leg,
+          angle: this.shell.rotation + i * legSpacing,
+          grip:
+            leg.foot.kind === "planted"
+              ? { ...leg.foot, travel: foot.slideSpeed * dt }
+              : undefined
+        }))
       : [];
-    const plan = planFootholds(edges, requests);
+    const held = this.updateCrouch(dt, legs, edges);
+    const offset = this.stance.position;
+    const stance = this.stanceAt(offset);
+    // Predict travel at the crouch the grips permit. Future grips may limit further contraction.
+    const requests = legs.map(({ leg, angle, grip }) => {
+      const stepTime = grip ? foot.stepSeconds : (leg.step?.remaining ?? 0);
+      const touchdown = Math.max(0, stepTime - dt);
+      const holdTime = touchdown + gripSeconds;
+      return {
+        current: { stance, angle },
+        landing: {
+          stance: touchdown ? this.stanceAt(offset, touchdown) : stance,
+          angle: angle + rollRate * touchdown
+        },
+        hold: {
+          stance: this.stanceAt(offset, holdTime),
+          angle: angle + rollRate * holdTime
+        },
+        previous: leg.foot.kind === "reaching" ? leg.foot.anchor : undefined,
+        grip
+      };
+    });
+    const plan = planFootholds(edges, requests, held);
     for (const [i, leg] of this.legs.entries()) {
       const contact = plan[i];
       if (leg.foot.kind === "planted") {
@@ -379,28 +394,28 @@ export class Player implements Entity {
         };
       }
     }
+    return stance;
   }
 
-  private updateFeet(dt: number, ground: GroundPolygon[], stance: LegStance) {
+  private updateFeet(dt: number, ground: GroundPolygon[]) {
     const speed = Math.abs(this.groundSpeed);
     const rollRate = speed / this.body.radius;
     // Faster steps leave less time to open the foot before its anchor passes.
     const scaleStep =
       (1 - foot.foldedScale) * (1 / foot.unfoldSeconds + rollRate / legSpacing) * dt;
     const shake = this.shell.position;
-    const swingCenter = vec2.add(vec2.create(), stance.center, shake);
     // Look one step beyond touchdown, or a fraction of a stride at higher speeds.
     const gripAngle = legSpacing * foot.gripCheckSpacingFraction;
     const gripSeconds =
       rollRate > 0 ? Math.min(foot.stepSeconds, gripAngle / rollRate) : foot.stepSeconds;
-    const searchReach =
-      shellRadius + legConfig.maxExtension + foot.height + halfSole + vec2.length(shake);
+    const searchReach = maxLegReach + foot.height + halfSole + vec2.length(shake);
     const edges = nearbyEdges(
       this.body.pos,
       searchReach + speed * (foot.stepSeconds + gripSeconds),
       ground
     );
-    this.placeFeet(stance, edges, gripSeconds, dt);
+    const stance = this.placeFeet(edges, gripSeconds, dt);
+    const swingCenter = vec2.add(vec2.create(), stance.center, shake);
     const offsets = spacingOffsets(this.legs, this.shell.rotation);
     for (const [i, leg] of this.legs.entries()) {
       if (leg.foot.kind === "planted") continue;
@@ -425,7 +440,7 @@ export class Player implements Entity {
           progress,
           foot.stepHeight * lift
         );
-        target.length = Math.min(target.length, stance.maxReach);
+        target.length = Math.min(target.length, stance.landingReach);
       }
       leg.angle =
         leg.foot.kind === "free"
