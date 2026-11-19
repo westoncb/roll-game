@@ -6,7 +6,6 @@ import type { Entity } from "./entity";
 import {
   fitCrouchGrips,
   planFootholds,
-  planGrips,
   plantedPose,
   poseFits,
   soleAt,
@@ -453,10 +452,7 @@ export class Player implements Entity {
         grip
       };
     });
-    const plan =
-      this.gun.phase === "aiming"
-        ? planGrips(edges, stance, legs)
-        : planFootholds(edges, requests, held);
+    const plan = planFootholds(edges, requests, held);
     for (const [i, leg] of this.legs.entries()) {
       const contact = plan[i];
       if (leg.foot.kind === "planted") {
