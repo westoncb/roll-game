@@ -31,6 +31,8 @@ import { angleDifference, approach, approachAngle, largestFit, lerp, tau } from 
 const legCount = 10;
 const spacing = tau / legCount;
 const maxLegAngle = spacing * 0.49;
+// A critically damped spacing correction from rest closes 95% of the gap in 120 ms.
+const spacingSpringRate = 4.744 / 0.12;
 const restLength = 23;
 const maxReach = 43;
 const chargedLegLength = 13;
@@ -55,7 +57,8 @@ const wallEnterX = 0.4;
 const wallExitX = 0.65;
 const minLandingSlide = 20;
 
-type FootState = { kind: "free" } | { kind: "reaching" | "planted"; anchor: FootAnchor };
+type FreeFoot = { kind: "free"; offset: number; angularVelocity: number };
+type FootState = FreeFoot | { kind: "reaching" | "planted"; anchor: FootAnchor };
 // Angles are in world coordinates. The leg index identifies its part of the rotating body.
 type Leg = Pose & { foot: FootState; footScale: number; soleHalfWidth: number };
 
@@ -69,13 +72,13 @@ function clearSwing(center: vec2, leg: Leg, edges: GroundEdge[]) {
     ) ?? 0;
 }
 
-// Split the unwrapped clockwise span between successive planted legs into equal gaps.
-function targetAngles(legs: Leg[], bodyAngle: number) {
-  const angles = legs.map((_, i) => bodyAngle + i * spacing);
+// Even spacing between two pins means interpolating their offsets from the shell's spokes.
+function spacingOffsets(legs: Leg[], bodyAngle: number) {
+  const offsets: number[] = Array(legs.length).fill(0);
   const pins: number[] = [];
   for (const [i, leg] of legs.entries()) {
     if (leg.foot.kind === "planted") {
-      angles[i] += angleDifference(angles[i], leg.angle);
+      offsets[i] = angleDifference(bodyAngle + i * spacing, leg.angle);
       pins.push(i);
     }
   }
@@ -83,11 +86,19 @@ function targetAngles(legs: Leg[], bodyAngle: number) {
     const first = pins[p],
       last = pins[(p + 1) % pins.length];
     const count = (last - first + legCount) % legCount || legCount;
-    const span = angles[last] + (last <= first ? tau : 0) - angles[first];
     for (let j = 1; j < count; j++)
-      angles[(first + j) % legCount] = angles[first] + (span * j) / count;
+      offsets[(first + j) % legCount] = lerp(offsets[first], offsets[last], j / count);
   }
-  return angles;
+  return offsets;
+}
+
+function settleSpacing(foot: FreeFoot, target: number, dt: number) {
+  const error = foot.offset - target;
+  const decay = Math.exp(-spacingSpringRate * dt);
+  const travel = (foot.angularVelocity + spacingSpringRate * error) * dt;
+  foot.offset = target + (error + travel) * decay;
+  foot.angularVelocity = (foot.angularVelocity - spacingSpringRate * travel) * decay;
+  return foot.offset;
 }
 
 export class Player implements Entity {
@@ -97,7 +108,7 @@ export class Player implements Entity {
     footAngle: i * spacing,
     footScale: foldedFootScale,
     soleHalfWidth: foldedHalfSole,
-    foot: { kind: "free" }
+    foot: { kind: "free", offset: 0, angularVelocity: 0 }
   }));
   support: Support | null = null;
   private moveInput = 0;
@@ -338,10 +349,16 @@ export class Player implements Entity {
       const anchor = this.support
         ? findFoothold(stance, restAngle, maxLegAngle, this.body.radius, edges)
         : null;
-      leg.foot = anchor ? { kind: "reaching", anchor } : { kind: "free" };
+      if (anchor) leg.foot = { kind: "reaching", anchor };
+      else if (leg.foot.kind !== "free")
+        leg.foot = {
+          kind: "free",
+          offset: angleDifference(restAngle, leg.angle),
+          angularVelocity: 0
+        };
       return anchor;
     });
-    const targets = targetAngles(this.legs, this.shell.rotation);
+    const offsets = spacingOffsets(this.legs, this.shell.rotation);
     for (const [i, leg] of this.legs.entries()) {
       const anchor = contacts[i];
       const room = anchor ? padHalfWidth(anchor, contacts) : halfSole;
@@ -351,11 +368,15 @@ export class Player implements Entity {
       );
       if (leg.foot.kind === "planted") continue;
       leg.footScale = approach(leg.footScale, anchor ? 1 : foldedFootScale, scaleStep);
-      const target =
-        leg.foot.kind === "reaching"
-          ? plantedPose(stance.center, leg.foot.anchor)
-          : { angle: targets[i], length: stance.restLength, footAngle: targets[i] };
-      leg.angle = approachAngle(leg.angle, target.angle, (14 + rollRate) * dt);
+      let target: Pose;
+      if (leg.foot.kind === "free") {
+        const offset = settleSpacing(leg.foot, offsets[i], dt);
+        leg.angle = this.shell.rotation + i * spacing + offset;
+        target = { angle: leg.angle, length: stance.restLength, footAngle: leg.angle };
+      } else {
+        target = plantedPose(stance.center, leg.foot.anchor);
+        leg.angle = approachAngle(leg.angle, target.angle, (14 + rollRate) * dt);
+      }
       leg.length = approach(leg.length, target.length, (legExtensionSpeed + speed) * dt);
       leg.footAngle = approachAngle(leg.footAngle, target.footAngle, (15 + rollRate) * dt);
       if (
