@@ -2,6 +2,7 @@ import { vec2 } from "gl-matrix";
 import type { Entity } from "./entity";
 import { GroundPolygon } from "./ground";
 import type { InputState } from "./input";
+import { ParticleSystem } from "./particles/system";
 import { stepPhysics } from "./physics";
 import { Player } from "./player";
 
@@ -15,6 +16,7 @@ export type LevelData = {
 };
 
 export class Level {
+  readonly particles = new ParticleSystem();
   readonly size: Readonly<{ width: number; height: number }>;
   readonly player: Player;
   readonly ground: GroundPolygon[];
@@ -41,10 +43,14 @@ export class Level {
       else stepPhysics(entity.body, this.ground, dt);
     }
     for (const entity of this.entities) entity.afterPhysics?.(dt, this.ground);
+    this.particles.step(dt);
   }
 
   draw(ctx: CanvasRenderingContext2D, alpha = 1) {
+    for (const entity of this.entities) entity.visual.samplePose(alpha);
     for (const polygon of this.ground) polygon.draw(ctx);
-    for (const entity of this.entities) entity.visual.render(ctx, alpha);
+    this.particles.draw(ctx, "behind", alpha);
+    for (const entity of this.entities) entity.visual.paintSampled(ctx);
+    this.particles.draw(ctx, "front", alpha);
   }
 }

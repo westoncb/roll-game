@@ -3,8 +3,11 @@ import { constants } from "node:fs";
 import { open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
+import { readParticleEffect } from "../client/src/particles/read-definition.ts";
+
+const particles = new URL("../assets/particles/", import.meta.url);
 const levels = new URL("../levels/", import.meta.url);
-const levelFile = /^[a-z0-9][a-z0-9_-]{0,99}\.json$/;
+const assetFile = /^[a-z0-9][a-z0-9_-]{0,99}\.json$/;
 const maxBytes = 4 * 1024 * 1024;
 
 function json(response: ServerResponse, status: number, value: unknown) {
@@ -15,7 +18,12 @@ function json(response: ServerResponse, status: number, value: unknown) {
   response.end(JSON.stringify(value));
 }
 
-async function saveLevel(request: IncomingMessage, response: ServerResponse, file: URL) {
+async function saveAsset(
+  request: IncomingMessage,
+  response: ServerResponse,
+  file: URL,
+  particle: boolean
+) {
   if (
     request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !==
     "application/json"
@@ -29,24 +37,33 @@ async function saveLevel(request: IncomingMessage, response: ServerResponse, fil
     size += chunk.length;
     if (size > maxBytes) {
       request.resume();
-      return json(response, 413, { error: "Level exceeds 4 MiB." });
+      return json(response, 413, { error: "Asset exceeds 4 MiB." });
     }
     chunks.push(chunk);
   }
 
-  let level: unknown;
+  let data: unknown;
   try {
-    level = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     return json(response, 400, { error: "Invalid JSON." });
   }
-  if (level === null || typeof level !== "object" || Array.isArray(level)) {
-    return json(response, 400, { error: "Expected a level object." });
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    return json(response, 400, { error: "Expected an asset object." });
   }
 
-  const temporary = new URL(`${randomUUID()}.tmp`, levels);
+  if (particle) {
+    try {
+      readParticleEffect(data, file.pathname.split("/").pop()!);
+    } catch (cause) {
+      return json(response, 400, {
+        error: cause instanceof Error ? cause.message : "Invalid particle effect."
+      });
+    }
+  }
+  const temporary = new URL(`${randomUUID()}.tmp`, file);
   try {
-    await writeFile(temporary, JSON.stringify(level, null, 2) + "\n", { flag: "wx" });
+    await writeFile(temporary, JSON.stringify(data, null, 2) + "\n", { flag: "wx" });
     await rename(temporary, file);
   } finally {
     await rm(temporary, { force: true });
@@ -67,45 +84,46 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     }
     const files = await readdir(levels, { withFileTypes: true });
     const ids = files
-      .filter((file) => file.isFile() && levelFile.test(file.name))
+      .filter((file) => file.isFile() && assetFile.test(file.name))
       .map((file) => file.name.slice(0, -".json".length));
     return json(response, 200, ids.sort());
   }
 
-  const prefix = "/api/levels/";
+  const particle = path.startsWith("/api/particles/");
+  const prefix = particle ? "/api/particles/" : "/api/levels/";
   const filename = path.slice(prefix.length) + ".json";
-  if (!path.startsWith(prefix) || !levelFile.test(filename)) {
-    return json(response, 404, { error: "Unknown route or level ID." });
+  if (!path.startsWith(prefix) || !assetFile.test(filename)) {
+    return json(response, 404, { error: "Unknown route or asset ID." });
   }
 
-  const file = new URL(filename, levels);
-  if (request.method === "PUT") return saveLevel(request, response, file);
+  const file = new URL(filename, particle ? particles : levels);
+  if (request.method === "PUT") return saveAsset(request, response, file, particle);
   if (request.method === "GET") {
-    const levelFileHandle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
-      const level = await levelFileHandle.readFile("utf8");
+      const contents = await handle.readFile("utf8");
       response.writeHead(200, {
         "Content-Type": "application/json",
         "Cache-Control": "no-store"
       });
-      response.end(level);
+      response.end(contents);
     } finally {
-      await levelFileHandle.close();
+      await handle.close();
     }
     return;
   }
   response.setHeader("Allow", "GET, PUT");
-  json(response, 405, { error: "Use GET or PUT for a level." });
+  json(response, 405, { error: "Use GET or PUT for an asset." });
 }
 
 createServer((request, response) => {
   handle(request, response).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT" || error.code === "ELOOP") {
-      return json(response, 404, { error: "Level not found." });
+      return json(response, 404, { error: "Asset not found." });
     }
     console.error(error);
-    json(response, 500, { error: "Level storage failed." });
+    json(response, 500, { error: "Asset storage failed." });
   });
 }).listen(3001, "127.0.0.1", () => {
-  console.log("Level API listening at http://127.0.0.1:3001");
+  console.log("Asset API listening at http://127.0.0.1:3001");
 });

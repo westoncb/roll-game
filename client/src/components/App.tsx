@@ -1,18 +1,14 @@
-import { useState } from "react";
+import { Editor } from "./editor/Editor";
 import { Game } from "./Game";
 
-enum AppState {
-  Game = "game",
-  Editor = "editor"
-}
-
 export function App() {
-  let [state, setState] = useState<AppState>(AppState.Game);
-
-  switch (state) {
-    case AppState.Game:
-      return <Game />;
-    case AppState.Editor:
-      return <div>editor</div>;
-  }
+  if (location.pathname.replace(/\/$/, "") === "/editor") return <Editor />;
+  return (
+    <>
+      <Game />
+      <a href="/editor" className="open-editor">
+        Level editor
+      </a>
+    </>
+  );
 }
