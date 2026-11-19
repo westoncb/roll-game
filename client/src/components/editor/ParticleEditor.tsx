@@ -10,6 +10,18 @@ export function ParticleEditor({ id, onClose }: { id: string; onClose: () => voi
   const [selected, setSelected] = useState(0);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const lastFixedSeed = useRef(0);
+  function setSeed(fixedSeed: number | undefined) {
+    if (
+      fixedSeed !== undefined &&
+      Number.isInteger(fixedSeed) &&
+      fixedSeed >= 0 &&
+      fixedSeed <= 0xffffffff
+    )
+      lastFixedSeed.current = fixedSeed;
+    setError("");
+    setDraft((current) => current && { ...current, fixedSeed });
+  }
   const path = "/api/particles/" + encodeURIComponent(id);
   useEffect(() => {
     const el = dialog.current!;
@@ -20,7 +32,10 @@ export function ParticleEditor({ id, onClose }: { id: string; onClose: () => voi
       if (!response.ok)
         throw new Error("Could not load " + id + " (HTTP " + response.status + ").");
       const effect = readParticleEffect(await response.json(), id);
-      if (!controller.signal.aborted) setDraft(effect);
+      if (!controller.signal.aborted) {
+        lastFixedSeed.current = effect.fixedSeed ?? 0;
+        setDraft(effect);
+      }
     }
     load().catch((cause) => {
       if (!controller.signal.aborted) setError(String(cause.message ?? cause));
@@ -75,11 +90,39 @@ export function ParticleEditor({ id, onClose }: { id: string; onClose: () => voi
         <h2 id="particle-title">{id}</h2>
       </header>
       <Preview definition={invalid ? null : draft} />
-      <section className="parameter-scroll" aria-label="Emitter parameters">
+      <section className="parameter-scroll" aria-label="Particle effect parameters">
         {draft ? (
           <>
+            <fieldset disabled={saving} className="parameter-fields effect-settings">
+              <legend>Effect settings</legend>
+              <label className="param">
+                Randomness
+                <select
+                  value={draft.fixedSeed === undefined ? "random" : "fixed"}
+                  onChange={(e) =>
+                    setSeed(e.target.value === "fixed" ? lastFixedSeed.current : undefined)
+                  }
+                >
+                  <option value="random">Random each time</option>
+                  <option value="fixed">Fixed seed</option>
+                </select>
+              </label>
+              {draft.fixedSeed !== undefined && (
+                <label className="param">
+                  Seed
+                  <input
+                    type="number"
+                    min={0}
+                    max={0xffffffff}
+                    step={1}
+                    value={Number.isFinite(draft.fixedSeed) ? draft.fixedSeed : ""}
+                    onChange={(e) => setSeed(e.currentTarget.valueAsNumber)}
+                  />
+                </label>
+              )}
+            </fieldset>
             <div className="parameter-heading">
-              <h3>Parameters</h3>
+              <h3>Emitter parameters</h3>
               <label>
                 Emitter{" "}
                 <select
@@ -101,6 +144,7 @@ export function ParticleEditor({ id, onClose }: { id: string; onClose: () => voi
                   change={(next) => {
                     setError("");
                     setDraft({
+                      ...draft,
                       emitters: draft.emitters.map((old, i) =>
                         i === selected ? next : old
                       )

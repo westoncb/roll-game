@@ -99,11 +99,22 @@ export function readParticleEffect(
 ): ParticleEffectDefinition {
   if (!isObject(data) || data.version !== 1)
     throw new Error(`${source} must be a version 1 particle effect.`);
+  const { fixedSeed } = data;
+  if (
+    fixedSeed !== undefined &&
+    !(
+      finite(fixedSeed) &&
+      Number.isInteger(fixedSeed) &&
+      fixedSeed >= 0 &&
+      fixedSeed <= 0xffffffff
+    )
+  )
+    throw new Error(`${source}.fixedSeed must be an unsigned 32-bit integer.`);
   if (!Array.isArray(data.emitters))
     throw new Error(`${source}.emitters must be an array.`);
   const emitters = data.emitters.map((value: unknown, i) => {
     assertEmitter(value, `${source}.emitters[${i}]`);
     return value;
   });
-  return { emitters };
+  return { fixedSeed, emitters };
 }

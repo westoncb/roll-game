@@ -5,21 +5,17 @@ import type { ParticleEffectDefinition } from "../../particles/definition";
 export function Preview({ definition }: { definition: ParticleEffectDefinition | null }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [background, setBackground] = useState("#18222a");
-  const [play, setPlay] = useState(0);
+  const [playCount, setPlayCount] = useState(0);
   useEffect(() => {
     const el = canvas.current;
     const ctx = el?.getContext("2d");
     if (!el || !ctx) return;
     const system = new ParticleSystem();
     if (definition)
-      system.play(
-        definition,
-        { kind: "world", position: [0, 0], angle: -Math.PI / 2 },
-        { seed: 17 }
-      );
+      system.play(definition, { kind: "world", position: [0, 0], angle: -Math.PI / 2 });
     const dt = 1 / 60;
     system.step(dt);
-    if (!play) for (let i = 0; i < 8; i++) system.step(dt);
+    if (playCount === 0) for (let i = 0; i < 8; i++) system.step(dt);
     function draw(alpha: number) {
       if (!ctx || !el) return;
       const { clientWidth: w, clientHeight: h } = el;
@@ -50,19 +46,19 @@ export function Preview({ definition }: { definition: ParticleEffectDefinition |
       draw(acc / dt);
       if (system.active) frame = requestAnimationFrame(tick);
     }
-    if (play && definition) frame = requestAnimationFrame(tick);
+    if (playCount > 0 && definition) frame = requestAnimationFrame(tick);
     const observer = new ResizeObserver(() => draw(1));
     observer.observe(el);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [definition, play]);
+  }, [definition, playCount]);
   return (
     <section className="preview">
       <canvas ref={canvas} style={{ background }} aria-label="Particle effect preview" />
       <div className="preview-bar">
-        <button disabled={!definition} onClick={() => setPlay(play + 1)}>
+        <button disabled={!definition} onClick={() => setPlayCount((count) => count + 1)}>
           ▶ Play
         </button>
         <label>

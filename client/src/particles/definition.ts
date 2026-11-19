@@ -43,5 +43,7 @@ export interface EmitterDefinition {
 }
 
 export interface ParticleEffectDefinition {
+  /** Reuse this unsigned 32-bit seed on each play. Omit for a fresh variation. */
+  readonly fixedSeed?: number;
   readonly emitters: readonly EmitterDefinition[];
 }

@@ -168,6 +168,7 @@
   justify-content: space-between;
 }
 .preview-bar {
+  flex-wrap: wrap;
   border-top: 1px solid var(--line);
   padding: 6px 10px;
   background: #20272e;
@@ -209,6 +210,15 @@
 .parameter-fields legend {
   padding: 14px 0 4px;
   color: var(--muted);
+}
+.effect-settings {
+  margin-bottom: 16px;
+}
+.effect-settings legend {
+  padding: 0 0 8px;
+  color: inherit;
+  font-size: 16px;
+  font-weight: 600;
 }
 .param {
   display: grid;

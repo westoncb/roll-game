@@ -18,7 +18,6 @@ export interface EffectHandle {
 
 export interface EffectOptions {
   strength?: number;
-  seed?: number;
 }
 
 export interface EffectPlayer {
@@ -61,7 +60,7 @@ class Effect implements EffectHandle {
     options: EffectOptions
   ) {
     this.anchor = new EffectAnchor(placement);
-    this.seed = (options.seed ?? Math.random() * 0x100000000) >>> 0;
+    this.seed = def.fixedSeed ?? Math.floor(Math.random() * 0x100000000);
     const strength = Math.max(0, Math.min(1, options.strength ?? 1));
     this.emitters = def.emitters.map((emitter) => new Emitter(emitter, strength));
   }
