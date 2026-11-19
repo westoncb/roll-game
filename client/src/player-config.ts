@@ -59,6 +59,8 @@ export const playerConfig = {
     fullSpeed: 750,
     fullChargeSeconds: 0.75,
     chargedSpeedScale: 0.02,
+    // Distance from the shell rim to a free ankle at full charge.
+    freeLegStub: 5,
     shakeAmplitudeX: 2.5,
     shakeAmplitudeY: 1.5,
     shakeHzX: 11,

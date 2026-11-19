@@ -551,6 +551,7 @@ export class Player implements Entity {
     const stance = this.placeFeet(edges, gripSeconds, dt);
     const swingCenter = vec2.add(vec2.create(), stance.center, shake);
     const offsets = spacingOffsets(this.legs, this.shell.rotation);
+    const charge = this.jumpCharge();
     for (const [i, leg] of this.legs.entries()) {
       if (leg.foot.kind === "planted") continue;
       const step = leg.step;
@@ -563,10 +564,11 @@ export class Player implements Entity {
       if (leg.foot.kind === "free") {
         const offset = settleSpacing(leg.foot, offsets[i], dt);
         const angle = this.shell.rotation + i * legSpacing + offset;
+        const rim = tuckedLegLength(angle - this.shell.rotation);
         const length =
           this.gun.phase === "aiming"
-            ? tuckedLegLength(angle - this.shell.rotation)
-            : stance.restLength;
+            ? rim
+            : lerp(stance.restLength, rim + jump.freeLegStub, charge);
         target = { angle, length, footAngle: angle };
       } else {
         target = plantedPose(stance.center, leg.foot.anchor);
