@@ -1,6 +1,7 @@
 import { vec2 } from "gl-matrix";
 import { nearbyEdges, nearestBoundary, type GroundContact } from "./collision";
 import type { GroundEdge, GroundPolygon } from "./ground";
+import { playerConfig } from "./player-config";
 import { angleDifference, closestPointOnSegment } from "./util";
 
 // An edge offset is measured along its tangent. A corner offset is measured
@@ -146,13 +147,14 @@ function adjacent(support: Support, direction: number, radius: number): Support 
 
 export function advanceAlongSurface(
   initial: Support,
-  distance: number,
+  speed: number,
+  dt: number,
   radius: number,
   ground: GroundPolygon[]
 ) {
   let support = initial;
-  const direction = Math.sign(distance);
-  let remaining = Math.abs(distance);
+  const direction = Math.sign(speed);
+  let remaining = Math.abs(speed) * dt;
   let travelled = 0;
   let retainedSpeed = 1;
   // A fixed tick usually stays on one feature. The bound also handles pinched passages.
@@ -163,6 +165,23 @@ export function advanceAlongSurface(
       break;
     }
     const available = direction > 0 ? end - support.offset : support.offset - start;
+    if (support.kind === "corner") {
+      // Turning through θ changes velocity by 2 |v| sin(θ/2). Compare the
+      // remaining bend to the grip needed for a right angle at the reference speed.
+      const turn = Math.max(0, available) / radius;
+      const currentSpeed = Math.abs(speed) * retainedSpeed;
+      if (
+        currentSpeed * Math.sin(turn / 2) * Math.SQRT2 >=
+        playerConfig.movement.cornerReleaseSpeed
+      ) {
+        return {
+          support,
+          travel: direction * travelled,
+          retainedSpeed,
+          airTime: remaining / currentSpeed
+        };
+      }
+    }
     const step = Math.max(0, Math.min(remaining, available));
     const at = (travel: number): Support => ({
       ...support,
@@ -213,5 +232,5 @@ export function advanceAlongSurface(
     remaining *= carry;
   }
   if (remaining > 0.000001) retainedSpeed = 0;
-  return { support, travel: direction * travelled, retainedSpeed };
+  return { support, travel: direction * travelled, retainedSpeed, airTime: 0 };
 }
