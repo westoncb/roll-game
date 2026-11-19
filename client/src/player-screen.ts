@@ -21,19 +21,20 @@ const staticColors = [
 
 type ScreenInput = {
   airborne: boolean;
-  charging: boolean;
+  charge: number;
   speed: number;
   feet: number;
   plantedNormal: vec2 | null;
 };
 
-type ScreenMode = "terminal" | "sight" | "chargeGrin" | "flightStatic";
+type ScreenMode = "terminal" | "sight" | "chargeScope" | "flightStatic";
 
 export class PlayerScreen extends Drawable2D {
   private previousLine = ">SYS";
   private line = "F000";
   private lineTime = 0;
   private mode: ScreenMode = "terminal";
+  private charge = 0;
   private time = 0;
   private lastAirTime = -Infinity;
   private settledSeconds = 0;
@@ -49,10 +50,11 @@ export class PlayerScreen extends Drawable2D {
     vec2.set(this.scale, scale, scale);
   }
 
-  update(dt: number, { airborne, charging, speed, feet, plantedNormal }: ScreenInput) {
+  update(dt: number, { airborne, charge, speed, feet, plantedNormal }: ScreenInput) {
     this.time += dt;
+    this.charge = charge;
     if (airborne) this.lastAirTime = this.time;
-    this.mode = this.displayMode(charging);
+    this.mode = this.displayMode();
     this.lineTime += dt;
     // Leave a short pause after the final character before scrolling the line up.
     const lineSeconds = (this.line.length + 2) * characterSeconds;
@@ -72,8 +74,8 @@ export class PlayerScreen extends Drawable2D {
     }
   }
 
-  private displayMode(charging: boolean): ScreenMode {
-    if (charging) return "chargeGrin";
+  private displayMode(): ScreenMode {
+    if (this.charge > 0) return "chargeScope";
     const phase = this.gun.phase;
     if (
       this.time - this.lastAirTime < staticHoldSeconds + staticFadeSeconds &&
@@ -100,8 +102,8 @@ export class PlayerScreen extends Drawable2D {
       return;
     }
     ctx.rotate(this.contentAngle);
-    if (this.mode === "chargeGrin") {
-      drawGrin(ctx);
+    if (this.mode === "chargeScope") {
+      drawChargeScope(ctx, this.time, this.charge);
     } else if (this.mode === "sight") {
       const matrix = this.renderWorldMatrix;
       const screenAngle = Math.atan2(matrix[1], matrix[0]) + this.contentAngle;
@@ -159,33 +161,32 @@ function drawSight(ctx: CanvasRenderingContext2D, aimAngle: number) {
   ctx.fill();
 }
 
-function drawGrin(ctx: CanvasRenderingContext2D) {
-  ctx.strokeStyle = "#182333";
-  ctx.lineWidth = 1.6;
-  ctx.lineCap = "round";
+function drawChargeScope(ctx: CanvasRenderingContext2D, time: number, charge: number) {
+  // Span the diagonal so the trace reaches the glass edge at any screen orientation.
+  const span = Math.ceil(Math.hypot(screen.width, screen.height));
+  const amplitude = 1.8 + 4.6 * charge;
+  const frequency = (tau * (1 + 0.8 * charge)) / screen.width;
+  const waveY = (x: number) => {
+    const phase = x * frequency - time * tau * 1.3;
+    return amplitude * (Math.sin(phase) + 0.24 * charge * Math.sin(2 * phase + 0.6));
+  };
+
+  ctx.fillStyle = "#902d44";
+  for (let x = -span / 2; x < span / 2; x += 4) ctx.fillRect(x, -0.45, 2, 0.9);
   ctx.beginPath();
-  for (const x of [-4.2, 4.2]) {
-    ctx.moveTo(x - 1.9, -3);
-    ctx.quadraticCurveTo(x, -7, x + 1.9, -3.4);
-  }
+  ctx.moveTo(-span / 2, waveY(-span / 2));
+  for (let x = -span / 2 + 0.5; x <= span / 2; x += 0.5) ctx.lineTo(x, waveY(x));
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#a33145";
+  ctx.stroke();
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = "#fff1b3";
   ctx.stroke();
 
-  ctx.fillStyle = "#182333";
+  const sweepX = (((time * 1.5) % 1) - 0.5) * span;
+  ctx.fillStyle = "#fffef2";
   ctx.beginPath();
-  ctx.moveTo(-7.6, -0.5);
-  ctx.quadraticCurveTo(0, 1.7, 7.5, -1.2);
-  ctx.bezierCurveTo(6.4, 9.3, -5.5, 9.8, -7.6, -0.5);
-  ctx.fill();
-  ctx.clip();
-  ctx.fillStyle = "#fff3cc";
-  ctx.beginPath();
-  ctx.moveTo(-6.3, -2);
-  ctx.lineTo(6.3, -2);
-  ctx.lineTo(5.5, 2.2);
-  ctx.quadraticCurveTo(0, 5, -5.3, 2.5);
-  ctx.fill();
-  ctx.fillStyle = "#ff8293";
-  ctx.beginPath();
-  ctx.ellipse(1.4, 7.3, 3.3, 1.9, -0.2, 0, tau);
+  ctx.arc(sweepX, waveY(sweepX), 1.65, 0, tau);
   ctx.fill();
 }

@@ -401,7 +401,7 @@ export class Player implements Entity {
     );
     this.screen.update(dt, {
       airborne: this.support === null,
-      charging: this.jumpHeldSeconds !== null,
+      charge: this.jumpCharge(),
       speed,
       feet,
       plantedNormal: normal
