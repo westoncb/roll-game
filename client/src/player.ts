@@ -155,6 +155,7 @@ export class Player implements Entity {
     this.land(ground);
     this.steerOnLanding();
     this.poseAnkles();
+    this.updateScreen(0);
   }
 
   private poseAnkles() {
@@ -385,6 +386,10 @@ export class Player implements Entity {
     this.gun.update(this.castBeam, dt);
     this.updateFeet(dt, ground);
     this.poseAnkles();
+    this.updateScreen(dt);
+  }
+
+  private updateScreen(dt: number) {
     const speed = vec2.length(this.body.vel);
     const normal =
       this.support && speed <= playerConfig.screen.settleSpeed
@@ -394,7 +399,13 @@ export class Player implements Entity {
       (count, leg) => count + Number(leg.foot.kind === "planted"),
       0
     );
-    this.screen.update(dt, this.jumpCharge(), speed, feet, normal);
+    this.screen.update(dt, {
+      airborne: this.support === null,
+      charging: this.jumpHeldSeconds !== null,
+      speed,
+      feet,
+      plantedNormal: normal
+    });
   }
 
   private updateCrouch(dt: number, legs: GripRequest[], edges: GroundEdge[]) {

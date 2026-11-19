@@ -6,13 +6,25 @@ import { approachAngle, tau } from "./util";
 
 const { screen } = playerConfig;
 const characterSeconds = 0.12;
+const landingGrinSeconds = 1;
+
+type ScreenInput = {
+  airborne: boolean;
+  charging: boolean;
+  speed: number;
+  feet: number;
+  plantedNormal: vec2 | null;
+};
+
+type ScreenMode = "terminal" | "sight" | "chargeGrin" | "flightGrin";
 
 export class PlayerScreen extends Drawable2D {
   private previousLine = ">SYS";
   private line = "F000";
   private lineTime = 0;
-  private charge = 0;
-  private pullSeconds = 0;
+  private mode: ScreenMode = "terminal";
+  private time = 0;
+  private grinUntil = 0;
   private settledSeconds = 0;
   private contentAngle = 0;
 
@@ -26,15 +38,10 @@ export class PlayerScreen extends Drawable2D {
     vec2.set(this.scale, scale, scale);
   }
 
-  update(
-    dt: number,
-    charge: number,
-    speed: number,
-    feet: number,
-    plantedNormal: vec2 | null
-  ) {
-    this.charge = charge;
-    this.pullSeconds = this.gun.phase === "pulling" ? this.pullSeconds + dt : 0;
+  update(dt: number, { airborne, charging, speed, feet, plantedNormal }: ScreenInput) {
+    this.time += dt;
+    if (airborne) this.grinUntil = this.time + landingGrinSeconds;
+    this.mode = this.displayMode(charging);
     this.lineTime += dt;
     // Leave a short pause after the final character before scrolling the line up.
     const lineSeconds = (this.line.length + 2) * characterSeconds;
@@ -54,12 +61,19 @@ export class PlayerScreen extends Drawable2D {
     }
   }
 
+  private displayMode(charging: boolean): ScreenMode {
+    if (charging) return "chargeGrin";
+    const phase = this.gun.phase;
+    if (this.time < this.grinUntil && (phase === "idle" || phase === "pulling"))
+      return "flightGrin";
+    return phase === "idle" ? "terminal" : "sight";
+  }
+
   private drawScreen(ctx: CanvasRenderingContext2D) {
     const { width, height, cornerRadius, borderWidth } = screen;
-    const phase = this.gun.phase;
-    if (phase === "pulling")
-      ctx.fillStyle = `hsl(${(165 + 210 * this.pullSeconds) % 360} 73% 62%)`;
-    else if (phase !== "idle") ctx.fillStyle = "#0c293a";
+    if (this.mode === "flightGrin")
+      ctx.fillStyle = `hsl(${(165 + 210 * this.time) % 360} 73% 62%)`;
+    else if (this.mode === "sight") ctx.fillStyle = "#0c293a";
     ctx.beginPath();
     ctx.roundRect(-width / 2, -height / 2, width, height, cornerRadius);
     ctx.fill();
@@ -67,22 +81,14 @@ export class PlayerScreen extends Drawable2D {
     ctx.stroke();
     ctx.clip();
     ctx.rotate(this.contentAngle);
-    ctx.font = 'bold 7px "Courier Prime", Menlo, monospace';
-    if (phase === "pulling") {
+    if (this.mode === "flightGrin" || this.mode === "chargeGrin") {
       drawGrin(ctx);
-    } else if (phase !== "idle") {
+    } else if (this.mode === "sight") {
       const matrix = this.renderWorldMatrix;
       const screenAngle = Math.atan2(matrix[1], matrix[0]) + this.contentAngle;
       drawSight(ctx, this.gun.renderAngle - screenAngle);
-    } else if (this.charge > 0) {
-      ctx.fillStyle = "#fff2db";
-      ctx.fillText("JMP", -7.5, -1);
-      const lit = Math.ceil(this.charge * 5);
-      for (let i = 0; i < 5; i++) {
-        ctx.globalAlpha = i < lit ? 1 : 0.22;
-        ctx.fillRect(-7.5 + i * 3.2, 2, 2.2, 3.5);
-      }
     } else {
+      ctx.font = 'bold 7px "Courier Prime", Menlo, monospace';
       const count = Math.min(
         this.line.length,
         Math.floor(this.lineTime / characterSeconds)
