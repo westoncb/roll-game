@@ -33,6 +33,7 @@ import {
   advanceAlongSurface,
   steerAlongSurface,
   supportFromContact,
+  supportOnEdge,
   surfaceNormal,
   surfacePose,
   type Support
@@ -121,6 +122,7 @@ export class Player implements Entity {
   private jumpHeldSeconds: number | null = null;
   private launchCharge: number | null = null;
   private readonly lastJumpDirection = vec2.fromValues(0, -1);
+  private pullSupport: Support | null = null;
   private jumping = false;
   private landingVelocity?: vec2;
   private groundSpeed = 0;
@@ -343,18 +345,43 @@ export class Player implements Entity {
     const body = this.body;
     const goal = vec2.scaleAndAdd(vec2.create(), anchor.point, anchor.normal, body.radius);
     const travel = vec2.subtract(vec2.create(), goal, body.pos);
-    const distance = vec2.length(travel);
     const step = playerConfig.gun.pullSpeed * dt;
-    if (distance > step) vec2.scale(travel, travel, step / distance);
-    const hit = sweepCircle(body.pos, body.radius, travel, ground);
-    vec2.scaleAndAdd(body.pos, body.pos, travel, hit?.fraction ?? 1);
-    if (hit || distance <= step) {
+    const from = this.pullSupport;
+    const normal = from && surfaceNormal(from, body.radius);
+    let arrived: Support | null = null;
+    const previous = vec2.clone(body.pos);
+
+    if (from && normal && vec2.dot(travel, normal) <= 0.0001) {
+      // A shallow shot can pull into the face we launched from. Follow that face
+      // until the tether lifts us off it or we reach another support.
+      const along = -normal[1] * travel[0] + normal[0] * travel[1];
+      const stride = Math.max(-step, Math.min(step, along));
+      const next = advanceAlongSurface(from, stride, body.radius, ground, "stop");
+      this.pullSupport = next.support;
+      vec2.copy(body.pos, surfacePose(next.support, body.radius).pos);
+      if (Math.abs(along) <= 0.0001 || next.retainedSpeed === 0) arrived = next.support;
+    } else {
+      this.pullSupport = null;
+      // At the stand-off point, even a rounding gap should resolve against the real surface.
+      if (vec2.squaredLength(travel) < 1e-8) vec2.subtract(travel, anchor.point, body.pos);
+      const distance = vec2.length(travel);
+      if (distance > step) vec2.scale(travel, travel, step / distance);
+      const hit = sweepCircle(body.pos, body.radius, travel, ground);
+      vec2.scaleAndAdd(body.pos, body.pos, travel, hit?.fraction ?? 1);
+      if (hit) arrived = supportFromContact(hit, body.radius);
+    }
+    collectContacts(body, ground);
+    if (arrived) {
+      this.pullSupport = null;
       this.gun.finish();
-      this.support = supportFromContact(hit ?? anchor, body.radius);
+      const targetEdge = anchor.ground.edges[anchor.edgeIndex];
+      this.support = supportOnEdge(body.pos, body.radius, targetEdge) ?? arrived;
       vec2.zero(body.vel);
       this.steerOnLanding();
-    } else vec2.scale(body.vel, travel, 1 / dt);
-    collectContacts(body, ground);
+    } else {
+      vec2.subtract(body.vel, body.pos, previous);
+      vec2.scale(body.vel, body.vel, 1 / dt);
+    }
   }
 
   private steerOnLanding() {
@@ -399,6 +426,7 @@ export class Player implements Entity {
   afterPhysics(dt: number, ground: GroundPolygon[]) {
     const latched = this.gun.update(this.castBeam, dt);
     if (latched) {
+      this.pullSupport = this.support;
       this.support = null;
       this.jumping = false;
       this.landingVelocity = undefined;
