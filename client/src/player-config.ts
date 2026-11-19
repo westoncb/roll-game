@@ -19,11 +19,12 @@ export const playerConfig = {
     swingFractionOfSpacing: 0.49,
     spacingSettleSeconds: 0.12
   },
+  ankleJoint: { radius: 3.5, borderWidth: 1 },
   foot: {
     height: 8,
     width: 18,
     borderWidth: 1,
-    foldedScale: 0.3,
+    foldedScale: 0.55,
     unfoldSeconds: 0.12,
     stepSeconds: 0.085,
     stepHeight: 6,

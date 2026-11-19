@@ -120,6 +120,9 @@ export class Player implements Entity {
   // The stance can crouch relative to the collider. Only the shell rolls.
   private readonly stance = new Drawable2D((ctx) => this.drawLegs(ctx), this.visual);
   private readonly ankles = this.legs.map(() => new Drawable2D(drawFoot, this.stance));
+  private readonly joints = this.ankles.map(
+    (ankle) => new Drawable2D(drawAnkleJoint, ankle)
+  );
   private readonly shell = new Drawable2D(drawShell, this.stance);
   private readonly chargeIndicator = new Drawable2D(drawHexagon, this.shell);
   private displayedCharge?: number;
@@ -222,6 +225,7 @@ export class Player implements Entity {
     this.shell.color = { fill: tint(colors.shellFill), stroke: rim };
     const footColors = { fill: tint(colors.footFill), stroke: tint(colors.footBorder) };
     for (const ankle of this.ankles) ankle.color = footColors;
+    for (const joint of this.joints) joint.color = this.shell.color;
     this.chargeIndicator.color = {
       fill: tint(colors.hexagonFill),
       stroke: tint(colors.hexagonBorder)
@@ -520,6 +524,15 @@ function drawFoot(ctx: CanvasRenderingContext2D) {
   // Keep the border inside the same triangle used to place the sole on terrain.
   ctx.clip();
   ctx.lineWidth = 2 * foot.borderWidth;
+  ctx.stroke();
+}
+
+function drawAnkleJoint(ctx: CanvasRenderingContext2D) {
+  const { radius, borderWidth } = playerConfig.ankleJoint;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, tau);
+  ctx.fill();
+  ctx.lineWidth = borderWidth;
   ctx.stroke();
 }
 
