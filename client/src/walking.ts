@@ -72,6 +72,25 @@ function alongTangent(normal: vec2, vector: vec2) {
   return -normal[1] * vector[0] + normal[0] * vector[1];
 }
 
+export function supportOnEdge(
+  center: vec2,
+  radius: number,
+  edge: GroundEdge
+): Support | null {
+  const point = closestPointOnSegment(vec2.create(), center, edge.a, edge.b);
+  const radial = vec2.subtract(vec2.create(), center, point);
+  if (Math.abs(vec2.length(radial) - radius) > clearanceTolerance) return null;
+  return supportFromContact(
+    {
+      ground: edge.ground,
+      edgeIndex: edge.index,
+      point,
+      normal: vec2.normalize(radial, radial)
+    },
+    radius
+  );
+}
+
 export function steerAlongSurface(
   support: Support,
   input: vec2,
@@ -86,22 +105,10 @@ export function steerAlongSurface(
 
   // At a junction the resting collider can touch several paths, even on one polygon.
   const paths = [{ support, normal }];
-  const point = vec2.create();
   for (const edge of nearbyEdges(center, radius + clearanceTolerance, ground)) {
     if (edge === support.edge) continue;
-    closestPointOnSegment(point, center, edge.a, edge.b);
-    const radial = vec2.subtract(vec2.create(), center, point);
-    if (Math.abs(vec2.length(radial) - radius) > clearanceTolerance) continue;
-    const next = supportFromContact(
-      {
-        ground: edge.ground,
-        edgeIndex: edge.index,
-        point,
-        normal: vec2.normalize(radial, radial)
-      },
-      radius
-    );
-    paths.push({ support: next, normal: surfaceNormal(next, radius) });
+    const next = supportOnEdge(center, radius, edge);
+    if (next) paths.push({ support: next, normal: surfaceNormal(next, radius) });
   }
   let best = { support, drive: 0 };
   let strength = -1;
@@ -141,7 +148,8 @@ export function advanceAlongSurface(
   initial: Support,
   distance: number,
   radius: number,
-  ground: GroundPolygon[]
+  ground: GroundPolygon[],
+  onContact: "continue" | "stop" = "continue"
 ) {
   let support = initial;
   const direction = Math.sign(distance);
@@ -188,12 +196,26 @@ export function advanceAlongSurface(
         break;
       }
       support = transfer;
+      if (onContact === "stop") {
+        retainedSpeed = 0;
+        break;
+      }
     } else {
       remaining -= step;
       travelled += step;
       support = reached;
       if (remaining <= 0.000001) break;
       support = adjacent(reached, direction, radius);
+      // At an inside corner the body touches the next face before leaving this one.
+      if (
+        onContact === "stop" &&
+        reached.kind === "edge" &&
+        support.kind === "edge" &&
+        direction * alongTangent(reached.edge.normal, support.edge.normal) < -0.000001
+      ) {
+        retainedSpeed = 0;
+        break;
+      }
     }
     // The length of the average unit normal is cos(turn / 2), including zero at a reversal.
     const incoming = surfaceNormal(reached, radius);

@@ -29,16 +29,31 @@ export function collectContacts(body: PhysicsBody, ground: GroundPolygon[]) {
 }
 
 export function gravityAt(body: PhysicsBody, ground: GroundPolygon[]) {
+  const acceleration = vec2.create();
+  sampleGravity(acceleration, body.pos, body.radius, ground);
+  return acceleration;
+}
+
+/** Write the net acceleration and return the signed distance to the closest terrain. */
+export function sampleGravity(
+  acceleration: vec2,
+  pos: vec2,
+  radius: number,
+  ground: GroundPolygon[]
+) {
   let x = 0;
   let y = 0;
+  let clearance = Infinity;
   const range = 180;
   for (const polygon of ground) {
-    const { normal, distance } = nearestBoundary(body.pos, polygon);
-    const t = Math.min(1, Math.max(0, (distance - body.radius) / range));
+    const { normal, distance } = nearestBoundary(pos, polygon);
+    clearance = Math.min(clearance, distance);
+    const t = Math.min(1, Math.max(0, (distance - radius) / range));
     const falloff = 1 - t * t * (3 - 2 * t);
     const strength = -650 * polygon.gravityScale * falloff;
     x += normal[0] * strength;
     y += normal[1] * strength;
   }
-  return vec2.fromValues(x, y);
+  vec2.set(acceleration, x, y);
+  return clearance;
 }

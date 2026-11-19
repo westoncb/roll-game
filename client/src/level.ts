@@ -1,6 +1,7 @@
 import { vec2 } from "gl-matrix";
 import { castSegment } from "./collision";
 import type { Entity } from "./entity";
+import { GravityField } from "./gravity-field";
 import { GroundPolygon } from "./ground";
 import type { InputState } from "./input";
 import { ParticleSystem } from "./particles/system";
@@ -21,6 +22,7 @@ export class Level {
   readonly size: Readonly<{ width: number; height: number }>;
   readonly player: Player;
   readonly ground: GroundPolygon[];
+  private readonly gravityField: GravityField;
   readonly entities: Entity[];
 
   constructor(data: LevelData) {
@@ -42,6 +44,12 @@ export class Level {
       }
     );
     this.entities = [this.player];
+    this.gravityField = new GravityField(
+      data.width,
+      data.height,
+      this.player.body.radius,
+      this.ground
+    );
   }
 
   update(input: InputState, dt: number) {
@@ -53,10 +61,12 @@ export class Level {
     }
     for (const entity of this.entities) entity.afterPhysics?.(dt, this.ground);
     this.particles.step(dt);
+    this.gravityField.step(dt);
   }
 
   draw(ctx: CanvasRenderingContext2D, alpha = 1) {
     for (const entity of this.entities) entity.visual.samplePose(alpha);
+    this.gravityField.draw(ctx, alpha);
     for (const polygon of this.ground) polygon.draw(ctx);
     this.particles.draw(ctx, "behind", alpha);
     for (const entity of this.entities) entity.visual.paintSampled(ctx);
