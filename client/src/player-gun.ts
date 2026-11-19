@@ -18,7 +18,7 @@ type Shot =
   | { kind: "idle" }
   | { kind: "aiming"; horizontalInput: number; turn: number }
   | { kind: "extending"; direction: vec2; castFrom: vec2 }
-  | { kind: "pulling"; hit: TerrainHit; latchLength: number }
+  | { kind: "pulling"; hit: TerrainHit; latchLength: number; lastDistance: number }
   | { kind: "retracting"; remaining: number };
 
 export class PlayerGun {
@@ -110,12 +110,22 @@ export class PlayerGun {
         const length = vec2.distance(muzzle, this.tip);
         this.shot =
           result.kind === "clingable"
-            ? { kind: "pulling", hit: result, latchLength: length }
+            ? {
+                kind: "pulling",
+                hit: result,
+                latchLength: length,
+                lastDistance: vec2.distance(this.root.position, this.tip)
+              }
             : { kind: "retracting", remaining: length };
       } else {
         vec2.copy(this.tip, end);
         vec2.copy(shot.castFrom, end);
       }
+    } else if (shot.kind === "pulling") {
+      // Physics can slide the body along an existing contact without reporting a new hit.
+      const distance = vec2.distance(this.root.position, this.tip);
+      if (shot.lastDistance - distance < gun.minPullProgressSpeed * dt) this.finish();
+      else shot.lastDistance = distance;
     } else if (shot.kind === "retracting") {
       const distance = vec2.distance(this.tip, muzzle);
       shot.remaining = Math.max(
@@ -126,7 +136,7 @@ export class PlayerGun {
         vec2.copy(this.tip, muzzle);
         this.finish();
       } else vec2.lerp(this.tip, muzzle, this.tip, shot.remaining / distance);
-    } else if (shot.kind !== "pulling") vec2.copy(this.tip, muzzle);
+    } else vec2.copy(this.tip, muzzle);
     this.root.worldToLocal(this.tip, this.tipNode.position);
   }
 
