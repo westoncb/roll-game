@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ParticleEffectDefinition } from "../../particles/definition";
-import { readParticleEffect } from "../../particles/read-definition";
+import type { ParticleEffect } from "../../particles/emitter";
+import { readParticleEffect } from "../../assets/particle-effect";
 import { Parameters } from "./Parameters";
 import { Preview } from "./Preview";
 
 export function ParticleEditor({ id, onClose }: { id: string; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [draft, setDraft] = useState<ParticleEffectDefinition | null>(null);
+  const [draft, setDraft] = useState<ParticleEffect | null>(null);
   const [selected, setSelected] = useState(0);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -89,7 +89,7 @@ export function ParticleEditor({ id, onClose }: { id: string; onClose: () => voi
         <span>Particle editor</span>
         <h2 id="particle-title">{id}</h2>
       </header>
-      <Preview definition={invalid ? null : draft} />
+      <Preview effect={invalid ? null : draft} />
       <section className="parameter-scroll" aria-label="Particle effect parameters">
         {draft ? (
           <>

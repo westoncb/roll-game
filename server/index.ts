@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-import { readParticleEffect } from "../client/src/particles/read-definition.ts";
+import { readParticleEffect } from "../client/src/assets/particle-effect.ts";
 
 const particles = new URL("../assets/particles/", import.meta.url);
 const levels = new URL("../levels/", import.meta.url);

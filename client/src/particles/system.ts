@@ -1,18 +1,22 @@
-import type { ReadonlyMat2d } from "gl-matrix";
+import { mat2d, type ReadonlyMat2d, type ReadonlyVec2 } from "gl-matrix";
+import type { Drawable2D } from "../drawable";
 import { lerp } from "../util";
-import type {
-  EmitterDefinition,
-  ParticleEffectDefinition,
-  ParticlePass,
-  ParticleValue
-} from "./definition";
-import { EffectAnchor, type EffectPlacement } from "./placement";
-import { drawEmitter, type Particle } from "./render";
+import {
+  EmitterState,
+  type ParticleEffect,
+  type ParticlePass,
+  type SpawnValue
+} from "./emitter";
+import { drawEmitter } from "./render";
+
+export type EffectOrigin =
+  | { kind: "world"; position: ReadonlyVec2; angle?: number }
+  | { kind: "attached"; node: Drawable2D; offset?: ReadonlyVec2; angle?: number };
 
 export interface EffectHandle {
   /** End emission. Existing particles finish their lifetimes. */
   stop(): void;
-  /** Freeze the placement at its current world pose before removing an attached node. */
+  /** Freeze the current world pose before removing an attached node. */
   detach(): void;
 }
 
@@ -20,113 +24,69 @@ export interface EffectOptions {
   strength?: number;
 }
 
-export interface EffectPlayer {
-  play(
-    definition: ParticleEffectDefinition,
-    placement: EffectPlacement,
-    options?: EffectOptions
-  ): EffectHandle;
-}
+export type EffectPlayer = Pick<ParticleSystem, "play">;
 
-class Emitter {
-  readonly particles: Particle[] = [];
-  readonly amountScale: number;
-  readonly speedScale: number;
-  readonly sizeScale: number;
-  scheduled = 0;
-  done = false;
-
-  constructor(
-    readonly def: EmitterDefinition,
-    strength: number
-  ) {
-    const scale = (range?: readonly [number, number]) =>
-      range ? lerp(range[0], range[1], strength) : 1;
-    this.amountScale = scale(def.strength?.amount);
-    this.speedScale = scale(def.strength?.speed);
-    this.sizeScale = scale(def.strength?.size);
-  }
-}
-
-class Effect implements EffectHandle {
-  readonly emitters: Emitter[];
-  readonly anchor: EffectAnchor;
+/** State shared by the emitters started together in one play call. */
+class Playback implements EffectHandle {
+  readonly emitters: EmitterState[];
   started?: number;
-  private seed: number;
+  private node?: Drawable2D;
+  private readonly local = mat2d.create();
+  private readonly world = mat2d.create();
+  private readonly nodePose = mat2d.create();
 
-  constructor(
-    def: ParticleEffectDefinition,
-    placement: EffectPlacement,
-    options: EffectOptions
-  ) {
-    this.anchor = new EffectAnchor(placement);
-    this.seed = def.fixedSeed ?? Math.floor(Math.random() * 0x100000000);
-    const strength = Math.max(0, Math.min(1, options.strength ?? 1));
-    this.emitters = def.emitters.map((emitter) => new Emitter(emitter, strength));
-  }
+  constructor(effect: ParticleEffect, origin: EffectOrigin, strength: number) {
+    const offset = origin.kind === "world" ? origin.position : origin.offset;
+    mat2d.fromRotation(this.local, origin.angle ?? 0);
+    this.local[4] = offset?.[0] ?? 0;
+    this.local[5] = offset?.[1] ?? 0;
+    if (origin.kind === "attached") this.node = origin.node;
 
-  sample(value: ParticleValue) {
-    if (typeof value === "number") return value;
-    this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0;
-    return lerp(value[0], value[1], this.seed / 0x100000000);
+    let seed = effect.fixedSeed ?? Math.floor(Math.random() * 0x100000000);
+    const sample = (value: SpawnValue) => {
+      if (typeof value === "number") return value;
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return lerp(value[0], value[1], seed / 0x100000000);
+    };
+    this.emitters = effect.emitters.map(
+      (emitter) => new EmitterState(emitter, strength, sample)
+    );
   }
 
   stop() {
-    for (const emitter of this.emitters) emitter.done = true;
+    for (const emitter of this.emitters) emitter.stop();
   }
 
   detach() {
-    this.anchor.detach();
+    if (!this.node) return;
+    mat2d.copy(this.local, this.worldFrame(this.node.worldMatrix(this.nodePose)));
+    this.node = undefined;
+  }
+
+  frameAt(alpha: number): ReadonlyMat2d {
+    return this.node
+      ? this.worldFrame(this.node.worldMatrixAt(alpha, this.nodePose))
+      : this.local;
+  }
+
+  renderFrame(): ReadonlyMat2d {
+    return this.node ? this.worldFrame(this.node.renderWorldMatrix) : this.local;
+  }
+
+  /** Node scale positions the attachment without resizing its particles. */
+  private worldFrame(parent: ReadonlyMat2d) {
+    mat2d.multiply(this.world, parent, this.local);
+    const angle = Math.atan2(this.world[1], this.world[0]);
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return mat2d.set(this.world, c, s, -s, c, this.world[4], this.world[5]);
   }
 }
 
-function spawn(effect: Effect, emitter: Emitter, born: number, frame?: ReadonlyMat2d) {
-  const def = emitter.def;
-  const along = def.segment ? effect.sample([0, 1]) : 0;
-  let x = (def.offset?.[0] ?? 0) + along * (def.segment?.[0] ?? 0);
-  let y = (def.offset?.[1] ?? 0) + along * (def.segment?.[1] ?? 0);
-  let ax = def.acceleration?.[0] ?? 0;
-  let ay = def.acceleration?.[1] ?? 0;
-  let heading = 0;
-  if (frame) {
-    const [a, b, c, d, tx, ty] = frame;
-    [x, y] = [a * x + c * y + tx, b * x + d * y + ty];
-    [ax, ay] = [a * ax + c * ay, b * ax + d * ay];
-    heading = Math.atan2(b, a);
-  }
-  const direction = heading + effect.sample(def.direction ?? 0);
-  const speed = effect.sample(def.speed ?? 0) * emitter.speedScale;
-  emitter.particles.push({
-    born,
-    lifetime: effect.sample(def.lifetime),
-    x,
-    y,
-    vx: Math.cos(direction) * speed,
-    vy: Math.sin(direction) * speed,
-    ax,
-    ay,
-    rotation: heading + effect.sample(def.rotation ?? 0),
-    angularSpeed: effect.sample(def.angularSpeed ?? 0),
-    radius: emitter.sizeScale * effect.sample(def.radius ?? 1)
-  });
-}
-
-/** Keep particles that were alive anywhere in the interval still being rendered. */
-function retire(particles: Particle[], before: number) {
-  let kept = 0;
-  for (const particle of particles) {
-    if (particle.born + particle.lifetime > before) particles[kept++] = particle;
-  }
-  const removed = particles.length - kept;
-  particles.length = kept;
-  return removed;
-}
-
-export class ParticleSystem implements EffectPlayer {
-  private readonly effects = new Set<Effect>();
+export class ParticleSystem {
+  private readonly playbacks = new Set<Playback>();
   private previousTime = 0;
   private time = 0;
-  private count = 0;
 
   constructor(private readonly maxParticles = 4096) {
     if (!Number.isSafeInteger(maxParticles) || maxParticles < 0)
@@ -134,18 +94,19 @@ export class ParticleSystem implements EffectPlayer {
   }
 
   get active() {
-    return this.effects.size > 0;
+    return this.playbacks.size > 0;
   }
 
   /** Playback begins at the next fixed-step boundary, after attachments have been posed. */
   play(
-    def: ParticleEffectDefinition,
-    placement: EffectPlacement,
+    effect: ParticleEffect,
+    origin: EffectOrigin,
     options: EffectOptions = {}
   ): EffectHandle {
-    const effect = new Effect(def, placement, options);
-    this.effects.add(effect);
-    return effect;
+    const strength = Math.max(0, Math.min(1, options.strength ?? 1));
+    const playback = new Playback(effect, origin, strength);
+    this.playbacks.add(playback);
+    return playback;
   }
 
   step(dt: number) {
@@ -153,75 +114,35 @@ export class ParticleSystem implements EffectPlayer {
       throw new RangeError("Particle step must be positive and finite.");
     this.previousTime = this.time;
     this.time += dt;
-    for (const effect of this.effects) {
-      for (const emitter of effect.emitters)
-        this.count -= retire(emitter.particles, this.previousTime);
-    }
-    for (const effect of this.effects) {
-      const start = (effect.started ??= this.time);
-      for (const emitter of effect.emitters) {
-        if (!emitter.done) this.emit(effect, emitter, start + (emitter.def.delay ?? 0), dt);
-      }
-      if (effect.emitters.every((e) => e.done && !e.particles.length)) {
-        effect.detach();
-        this.effects.delete(effect);
+
+    let capacity = this.maxParticles;
+    for (const playback of this.playbacks) {
+      for (const emitter of playback.emitters) {
+        emitter.retire(this.previousTime);
+        capacity -= emitter.particles.length;
       }
     }
-  }
-
-  private emit(effect: Effect, emitter: Emitter, start: number, dt: number) {
-    if (this.time < start) return;
-    const schedule = emitter.def.emission;
-    if (schedule.kind === "burst") {
-      this.births(
-        effect,
-        emitter,
-        start,
-        Math.round(schedule.count * emitter.amountScale),
-        dt
-      );
-      emitter.done = true;
-      return;
+    for (const playback of this.playbacks) {
+      const start = (playback.started ??= this.time);
+      const frameAt = (born: number) =>
+        playback.frameAt(Math.max(0, Math.min(1, (born - this.previousTime) / dt)));
+      for (const emitter of playback.emitters) {
+        capacity -= emitter.emit(start, this.time, capacity, frameAt);
+      }
+      if (playback.emitters.every((emitter) => emitter.finished)) {
+        playback.detach();
+        this.playbacks.delete(playback);
+      }
     }
-    const rate = schedule.perSecond * emitter.amountScale;
-    const elapsed = this.time - start;
-    const duration = schedule.duration ?? Infinity;
-    emitter.done = elapsed >= duration || rate <= 0;
-    if (rate <= 0) return;
-
-    // Derive the total from elapsed time so fractional births carry between ticks.
-    const due = Math.floor(Math.min(elapsed, duration) * rate + 1e-9);
-    const available = Math.min(due - emitter.scheduled, this.maxParticles - this.count);
-    for (let i = 1; i <= available; i++) {
-      const born = Math.min(this.time, start + (emitter.scheduled + i) / rate);
-      this.births(effect, emitter, born, 1, dt);
-    }
-    // A full budget drops excess births; they do not become a later burst.
-    emitter.scheduled = due;
-  }
-
-  private births(
-    effect: Effect,
-    emitter: Emitter,
-    born: number,
-    requested: number,
-    dt: number
-  ) {
-    const count = Math.min(requested, this.maxParticles - this.count);
-    if (count <= 0) return;
-    const alpha = Math.max(0, Math.min(1, (born - this.previousTime) / dt));
-    const frame = emitter.def.space === "local" ? undefined : effect.anchor.at(alpha);
-    for (let i = 0; i < count; i++) spawn(effect, emitter, born, frame);
-    this.count += count;
   }
 
   draw(ctx: CanvasRenderingContext2D, pass: ParticlePass, alpha = 1) {
     const time = lerp(this.previousTime, this.time, alpha);
-    for (const effect of this.effects) {
-      for (const emitter of effect.emitters) {
-        if ((emitter.def.pass ?? "front") !== pass || !emitter.particles.length) continue;
-        const frame = emitter.def.space === "local" ? effect.anchor.forRender() : undefined;
-        drawEmitter(ctx, emitter.def, emitter.particles, time, frame);
+    for (const playback of this.playbacks) {
+      for (const state of playback.emitters) {
+        if ((state.emitter.pass ?? "front") !== pass || !state.particles.length) continue;
+        const frame = state.emitter.space === "local" ? playback.renderFrame() : undefined;
+        drawEmitter(ctx, state, time, frame);
       }
     }
   }

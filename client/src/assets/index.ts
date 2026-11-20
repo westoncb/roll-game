@@ -1,4 +1,4 @@
-import { readParticleEffect } from "../particles/read-definition";
+import { readParticleEffect } from "./particle-effect";
 import { AssetCatalog } from "./catalog";
 
 const particleFiles = import.meta.glob<unknown>("../../../assets/particles/*.json", {

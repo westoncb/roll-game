@@ -1,4 +1,4 @@
-import type { EmitterDefinition } from "../../particles/definition";
+import type { Emitter } from "../../particles/emitter";
 
 const names: Record<string, string> = {
   pass: "Draw pass",
@@ -158,8 +158,8 @@ export function Parameters({
   emitter,
   change
 }: {
-  emitter: EmitterDefinition;
-  change: (e: EmitterDefinition) => void;
+  emitter: Emitter;
+  change: (e: Emitter) => void;
 }) {
   const { emission, strength, ...properties } = emitter;
   return (

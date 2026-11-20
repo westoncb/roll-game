@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ParticleSystem } from "../../particles/system";
-import type { ParticleEffectDefinition } from "../../particles/definition";
+import type { ParticleEffect } from "../../particles/emitter";
 
-export function Preview({ definition }: { definition: ParticleEffectDefinition | null }) {
+export function Preview({ effect }: { effect: ParticleEffect | null }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [background, setBackground] = useState("#18222a");
   const [playCount, setPlayCount] = useState(0);
@@ -11,8 +11,8 @@ export function Preview({ definition }: { definition: ParticleEffectDefinition |
     const ctx = el?.getContext("2d");
     if (!el || !ctx) return;
     const system = new ParticleSystem();
-    if (definition)
-      system.play(definition, { kind: "world", position: [0, 0], angle: -Math.PI / 2 });
+    if (effect)
+      system.play(effect, { kind: "world", position: [0, 0], angle: -Math.PI / 2 });
     const dt = 1 / 60;
     system.step(dt);
     if (playCount === 0) for (let i = 0; i < 8; i++) system.step(dt);
@@ -46,19 +46,19 @@ export function Preview({ definition }: { definition: ParticleEffectDefinition |
       draw(acc / dt);
       if (system.active) frame = requestAnimationFrame(tick);
     }
-    if (playCount > 0 && definition) frame = requestAnimationFrame(tick);
+    if (playCount > 0 && effect) frame = requestAnimationFrame(tick);
     const observer = new ResizeObserver(() => draw(1));
     observer.observe(el);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [definition, playCount]);
+  }, [effect, playCount]);
   return (
     <section className="preview">
       <canvas ref={canvas} style={{ background }} aria-label="Particle effect preview" />
       <div className="preview-bar">
-        <button disabled={!definition} onClick={() => setPlayCount((count) => count + 1)}>
+        <button disabled={!effect} onClick={() => setPlayCount((count) => count + 1)}>
           ▶ Play
         </button>
         <label>

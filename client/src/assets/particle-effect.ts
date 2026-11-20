@@ -1,4 +1,4 @@
-import type { EmitterDefinition, ParticleEffectDefinition } from "./definition.ts";
+import type { Emitter, ParticleEffect } from "../particles/emitter.ts";
 
 type Check = (value: unknown) => boolean;
 
@@ -80,9 +80,9 @@ const fields = {
         pair(scale) &&
         scale.every(nonnegative)
     )
-} satisfies Record<keyof EmitterDefinition, Check>;
+} satisfies Record<keyof Emitter, Check>;
 
-function assertEmitter(value: unknown, source: string): asserts value is EmitterDefinition {
+function assertEmitter(value: unknown, source: string): asserts value is Emitter {
   if (!isObject(value)) throw new Error(`${source} must be an emitter object.`);
   for (const [field, check] of Object.entries(fields)) {
     if (!(field in value) && field !== "emission" && field !== "lifetime") continue;
@@ -93,10 +93,7 @@ function assertEmitter(value: unknown, source: string): asserts value is Emitter
   }
 }
 
-export function readParticleEffect(
-  data: unknown,
-  source: string
-): ParticleEffectDefinition {
+export function readParticleEffect(data: unknown, source: string): ParticleEffect {
   if (!isObject(data) || data.version !== 1)
     throw new Error(`${source} must be a version 1 particle effect.`);
   const { fixedSeed } = data;
