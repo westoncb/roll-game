@@ -11,10 +11,28 @@
     },
     {
       "routine": "sketchBorder",
-      "ink": "#263335",
-      "highlight": "#bdc1a7",
-      "width": 4.2,
-      "reach": 6
+      "ink": "#090d13",
+      "width": 5.5,
+      "reach": 12
+    },
+    {
+      "routine": "grass",
+      "height": 15,
+      "spacing": 46,
+      "pixelSize": 2,
+      "shadow": "#2d4e4a",
+      "leaf": "#628a6d",
+      "highlight": "#a8bb83"
+    },
+    {
+      "routine": "fungalStrands",
+      "height": 36,
+      "spacing": 430,
+      "pixelSize": 2,
+      "shadow": "#483c54",
+      "filament": "#987991",
+      "spore": "#d68e9b",
+      "highlight": "#efd39c"
     }
   ]
 }

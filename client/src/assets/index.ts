@@ -1,11 +1,20 @@
 import { fill, stroke } from "../engine/draw-routines";
 import { readShapeStyle } from "../engine/shape-style";
 import { AssetCatalog } from "./catalog";
+import { fungalStrands } from "./draw-routines/fungal-strands";
+import { grass } from "./draw-routines/grass";
 import { sciFiDirt } from "./draw-routines/sci-fi-dirt";
 import { sketchBorder } from "./draw-routines/sketch-border";
 import { readParticleEffect } from "./particle-effect";
 
-const gameRoutines = { fill, stroke, sciFiDirt, sketchBorder };
+const gameRoutines = {
+  fill,
+  stroke,
+  sciFiDirt,
+  sketchBorder,
+  fungalStrands,
+  grass
+};
 
 const particleFiles = import.meta.glob<unknown>("../../../assets/particles/*.json", {
   eager: true,
