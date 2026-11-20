@@ -36,14 +36,18 @@ export function colonyPalette(primary = defaultPrimaryColor) {
   const mid = tint(gem, "black", 22);
   const minor = tint(primary, "#38394e", 32);
   const ash = "#505053";
-  const healthRamp = (healthy: string) =>
-    Array.from({ length: 17 }, (_, i) =>
-      i === 16
-        ? healthy
-        : i < 4
-          ? tint(ash, "#312432", 25 * i)
-          : tint("#312432", healthy, ((i - 4) / 12) * 100)
-    );
+  const healthRamp = (healthy: string) => {
+    // Give the bruise a plum hue at the lightness halfway between this fiber and its ash.
+    const midpoint = `color-mix(in oklab, ${ash}, ${healthy})`;
+    const bruise = `oklch(from ${midpoint} l 0.045 325)`;
+    return Array.from({ length: 17 }, (_, i) => {
+      if (i === 0) return ash;
+      if (i === 16) return healthy;
+      return i <= 8
+        ? `color-mix(in oklab, ${ash}, ${bruise} ${(100 * i) / 8}%)`
+        : `color-mix(in oklab, ${bruise}, ${healthy} ${(100 * (i - 8)) / 8}%)`;
+    });
+  };
   return {
     primary,
     ash,

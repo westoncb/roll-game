@@ -13,7 +13,7 @@
     "stretch": 1.55,
     "rotation": [-3.14, 3.14],
     "angularSpeed": [-3, 3],
-    "colorOverLife": "#5b595c",
+    "colorOverLife": "#505053",
     "opacityOverLife": [
       { "at": 0, "value": 1 },
       { "at": 0.3, "value": 0.9 },

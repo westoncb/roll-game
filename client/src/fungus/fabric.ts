@@ -9,9 +9,8 @@ type Tile = {
   x: number;
   y: number;
   ctx: CanvasRenderingContext2D;
-  segments: Set<FiberSegment>;
+  segments: Set<FiberSegment>; // Deposition order, including ash until it crumbles.
   main: Set<FiberSegment>;
-  ash: Set<FiberSegment>;
   mainDensity: number;
   minorDensity: number;
   dirty: boolean;
@@ -100,7 +99,6 @@ export class FungalFabric {
         ctx,
         segments: new Set(),
         main: new Set(),
-        ash: new Set(),
         mainDensity: 0,
         minorDensity: 0,
         dirty: false
@@ -136,6 +134,7 @@ export class FungalFabric {
   }
 
   private color(s: FiberSegment) {
+    if (s.dead) return this.palette.ash;
     if (this.tuning.showNutrientSupply) return this.palette.supply[s.supplyBand];
     return this.palette.tissue[s.strand.kind][s.healthBand];
   }
@@ -195,12 +194,10 @@ export class FungalFabric {
     this.wounded.delete(s);
     this.ash.set(s, this.time + this.tuning.ashHoldSeconds);
     for (const tile of this.segmentTiles(s)) {
-      tile.segments.delete(s);
       if (s.strand.kind === "main") {
         tile.main.delete(s);
         tile.mainDensity = Math.max(0, tile.mainDensity - s.densityWeight);
       } else tile.minorDensity = Math.max(0, tile.minorDensity - s.densityWeight);
-      tile.ash.add(s);
       tile.dirty = true;
     }
   }
@@ -263,10 +260,9 @@ export class FungalFabric {
       if (time < expiry) continue;
       this.ash.delete(s);
       for (const tile of this.segmentTiles(s)) {
-        tile.ash.delete(s);
+        tile.segments.delete(s);
         tile.dirty = true;
-        if (!tile.ash.size && !tile.segments.size)
-          this.tiles.delete(tileKey(tile.x, tile.y));
+        if (!tile.segments.size) this.tiles.delete(tileKey(tile.x, tile.y));
       }
       if (!this.releaseAsh || !s.length) continue;
       const x = (s.a[0] + s.b[0]) / 2,
@@ -291,7 +287,7 @@ export class FungalFabric {
         const tile = this.tiles.get(tileKey(x, y));
         if (tile)
           for (const s of includeMinor ? tile.segments : tile.main)
-            if (s.length) result.add(s);
+            if (!s.dead && s.length) result.add(s);
       }
     return result;
   }
@@ -304,8 +300,6 @@ export class FungalFabric {
         tile.ctx.clearRect(x, y, tileSize, tileSize);
         for (const s of tile.segments)
           if (s.length) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
-        for (const s of tile.ash)
-          if (s.length) stroke(tile.ctx, s, this.palette.ash, 2 * s.radius);
         tile.dirty = false;
       }
       ctx.drawImage(tile.ctx.canvas, x, y, tileSize, tileSize);
