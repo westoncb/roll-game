@@ -1,6 +1,7 @@
 import { vec2 } from "gl-matrix";
 import { gameAssets } from "../assets";
 import { nearbyEdges } from "../engine/collision";
+import { fill, stroke } from "../engine/draw-routines";
 import { Drawable2D } from "../engine/drawable";
 import { ShapeStyle, type StyledShape } from "../engine/shape";
 import type { Entity } from "../engine/entity";
@@ -64,10 +65,7 @@ const shellShape: StyledShape = {
     height: shell.size,
     cornerRadius: shell.cornerRadius
   },
-  style: new ShapeStyle([
-    { routine: "fill" },
-    { routine: "stroke", width: shell.borderWidth }
-  ])
+  style: new ShapeStyle([fill(), stroke({ width: shell.borderWidth })])
 };
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.
 const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;

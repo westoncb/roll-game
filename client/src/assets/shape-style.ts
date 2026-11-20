@@ -1,41 +1,48 @@
 import { ShapeStyle } from "../engine/shape";
-import { drawRoutines, type DrawCall, type DrawRoutines } from "../engine/draw-routines";
+import {
+  fill,
+  stroke,
+  type DrawRoutine,
+  type RoutineSettings
+} from "../engine/draw-routines";
 import { sciFiDirt } from "./draw-routines/sci-fi-dirt";
 import { sketchBorder } from "./draw-routines/sketch-border";
 
-const gameDrawRoutines = { ...drawRoutines, sciFiDirt, sketchBorder };
+const gameRoutines: Readonly<
+  Record<string, (settings: RoutineSettings, source: string) => DrawRoutine>
+> = {
+  fill,
+  stroke,
+  sciFiDirt,
+  sketchBorder
+};
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readCall(value: unknown, source: string): DrawCall {
-  if (!isObject(value) || typeof value.routine !== "string")
-    throw new Error(`${source} must name a draw routine.`);
-  return { ...value, routine: value.routine };
-}
-
-function readLegacyLayer(value: unknown, source: string): DrawCall {
-  if (!isObject(value) || (value.kind !== "fill" && value.kind !== "stroke"))
-    throw new Error(`Invalid ${source}.kind.`);
-  if (Object.hasOwn(value, "routine")) throw new Error(`Unknown field ${source}.routine.`);
-  const { kind, ...settings } = value;
-  return { routine: kind, ...settings };
-}
-
 export function readShapeStyle(
   data: unknown,
   source: string,
-  routines: DrawRoutines = gameDrawRoutines
+  readers = gameRoutines
 ): ShapeStyle {
-  if (!isObject(data) || (data.version !== 1 && data.version !== 2))
-    throw new Error(`${source} must be a version 1 or 2 shape style.`);
-  const legacy = data.version === 1;
-  const field = legacy ? "layers" : "calls";
+  if (!isObject(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3))
+    throw new Error(`${source} must be a version 1, 2, or 3 shape style.`);
+
+  const field = data.version === 1 ? "layers" : data.version === 2 ? "calls" : "routines";
   const entries = data[field];
   if (!Array.isArray(entries)) throw new Error(`${source}.${field} must be an array.`);
-  const read = legacy ? readLegacyLayer : readCall;
-  const location = `${source}.${field}`;
-  const calls = entries.map((entry, i) => read(entry, `${location}[${i}]`));
-  return new ShapeStyle(calls, routines, location);
+  const nameField = data.version === 1 ? "kind" : "routine";
+  const routines = entries.map((entry: unknown, i) => {
+    const location = `${source}.${field}[${i}]`;
+    if (!isObject(entry)) throw new Error(`${location} must name a draw routine.`);
+    const { [nameField]: name, ...settings } = entry;
+    if (nameField === "kind" && name !== "fill" && name !== "stroke")
+      throw new Error(`Invalid ${location}.kind.`);
+    if (typeof name !== "string") throw new Error(`${location} must name a draw routine.`);
+    if (!Object.hasOwn(readers, name))
+      throw new Error(`Unknown draw routine "${name}" at ${location}.`);
+    return readers[name](settings, location);
+  });
+  return new ShapeStyle(routines);
 }

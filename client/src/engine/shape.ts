@@ -1,11 +1,5 @@
 import type { ReadonlyVec2 } from "gl-matrix";
-import {
-  drawRoutines,
-  type BoundDrawCall,
-  type DrawCall,
-  type DrawFrame,
-  type DrawRoutines
-} from "./draw-routines";
+import type { DrawFrame, DrawRoutine } from "./draw-routines";
 
 /** Geometry in the drawable's local coordinates. */
 export type Shape2D =
@@ -20,25 +14,10 @@ export type Shape2D =
     };
 
 export class ShapeStyle {
-  readonly calls: readonly DrawCall[];
-  readonly #draws: readonly BoundDrawCall[];
-
-  constructor(
-    calls: readonly DrawCall[],
-    routines: DrawRoutines = drawRoutines,
-    source = "ShapeStyle.calls"
-  ) {
-    this.calls = Object.freeze(calls.map((call) => Object.freeze({ ...call })));
-    this.#draws = this.calls.map((call, i) => {
-      const location = `${source}[${i}]`;
-      if (!Object.hasOwn(routines, call.routine))
-        throw new Error(`Unknown draw routine "${call.routine}" at ${location}.`);
-      return routines[call.routine](call, location);
-    });
-  }
+  constructor(readonly routines: readonly DrawRoutine[]) {}
 
   draw(ctx: CanvasRenderingContext2D, shape: Shape2D, frame: DrawFrame) {
-    for (const draw of this.#draws) {
+    for (const draw of this.routines) {
       ctx.save();
       try {
         ctx.beginPath();

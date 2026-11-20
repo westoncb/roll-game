@@ -1,5 +1,9 @@
 import type { ReadonlyVec2 } from "gl-matrix";
-import { defineDrawRoutine, shapePath } from "../../engine/draw-routines";
+import {
+  shapePath,
+  type DrawRoutine,
+  type RoutineSettings
+} from "../../engine/draw-routines";
 import { lerp } from "../../engine/math";
 import type { Shape2D } from "../../engine/shape";
 import { checkFields, color, positive, seededRandom } from "./brush-settings";
@@ -160,77 +164,61 @@ function sketch(
   return { charcoal, rub, tooth, scratches };
 }
 
-export const sketchBorder = defineDrawRoutine(
-  (call, source) => {
-    checkFields(call, ["width", "reach", "ink", "highlight"], source);
-    const width = positive(call, "width", source),
-      reach = positive(call, "reach", source);
-    const ink = color(call, "ink", source),
-      highlight = color(call, "highlight", source);
-    const cache = new WeakMap<
-      Shape2D,
-      {
-        points: readonly ReadonlyVec2[];
-        contour: Path2D;
-        variants: Map<number, ReturnType<typeof sketch>>;
-      }
-    >();
-    let graphite: CanvasPattern | undefined, chalk: CanvasPattern | undefined;
-    return {
-      width,
-      ink,
-      graphite(ctx: CanvasRenderingContext2D) {
-        return (graphite ??= charcoalGrain(ctx, ink));
-      },
-      chalk(ctx: CanvasRenderingContext2D) {
-        return (chalk ??= charcoalGrain(ctx, highlight));
-      },
-      drawing(shape: Shape2D, seed: number) {
-        const points = borderVertices(shape);
-        let saved = cache.get(shape);
-        if (
-          !saved ||
-          saved.points.length !== points.length ||
-          !saved.points.every(([x, y], i) => x === points[i][0] && y === points[i][1])
-        ) {
-          saved = {
-            points: points.map(([x, y]) => [x, y]),
-            contour: shapePath(shape),
-            variants: new Map()
-          };
-          cache.set(shape, saved);
-        }
-        let paths = saved.variants.get(seed);
-        if (!paths) {
-          paths = sketch(points, width, reach, seed);
-          saved.variants.set(seed, paths);
-        }
-        return { contour: saved.contour, ...paths };
-      }
-    };
-  },
-  (ctx, shape, settings, frame) => {
-    const { contour, charcoal, rub, tooth, scratches } = settings.drawing(
-      shape,
-      frame.seed
-    );
+export function sketchBorder(settings: RoutineSettings, source: string): DrawRoutine {
+  checkFields(settings, ["width", "reach", "ink", "highlight"], source);
+  const width = positive(settings, "width", source),
+    reach = positive(settings, "reach", source);
+  const ink = color(settings, "ink", source),
+    highlight = color(settings, "highlight", source);
+  const cache = new WeakMap<
+    Shape2D,
+    {
+      points: readonly ReadonlyVec2[];
+      contour: Path2D;
+      variants: Map<number, ReturnType<typeof sketch>>;
+    }
+  >();
+  let graphite: CanvasPattern | undefined, chalk: CanvasPattern | undefined;
+  return (ctx, shape, frame) => {
+    const points = borderVertices(shape);
+    let saved = cache.get(shape);
+    if (
+      !saved ||
+      saved.points.length !== points.length ||
+      !saved.points.every(([x, y], i) => x === points[i][0] && y === points[i][1])
+    ) {
+      saved = {
+        points: points.map(([x, y]) => [x, y]),
+        contour: shapePath(shape),
+        variants: new Map()
+      };
+      cache.set(shape, saved);
+    }
+    let paths = saved.variants.get(frame.seed);
+    if (!paths) {
+      paths = sketch(points, width, reach, frame.seed);
+      saved.variants.set(frame.seed, paths);
+    }
+    graphite ??= charcoalGrain(ctx, ink);
+    chalk ??= charcoalGrain(ctx, highlight);
+
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     // A solid closed core joins every corner; only the outer rubbings are broken.
-    ctx.lineWidth = settings.width * 0.65;
-    ctx.strokeStyle = settings.ink;
-    ctx.stroke(contour);
-    ctx.lineWidth = settings.width * 1.55;
-    ctx.strokeStyle = settings.graphite(ctx);
-    ctx.stroke(contour);
+    ctx.lineWidth = width * 0.65;
+    ctx.strokeStyle = ink;
+    ctx.stroke(saved.contour);
+    ctx.lineWidth = width * 1.55;
+    ctx.strokeStyle = graphite;
+    ctx.stroke(saved.contour);
     ctx.fillStyle = ctx.strokeStyle;
-    ctx.fill(charcoal);
-    ctx.fillStyle = settings.chalk(ctx);
-    ctx.fill(rub);
+    ctx.fill(paths.charcoal);
+    ctx.fillStyle = chalk;
+    ctx.fill(paths.rub);
     ctx.globalAlpha *= 0.63;
-    ctx.fill(tooth);
+    ctx.fill(paths.tooth);
     ctx.strokeStyle = ctx.fillStyle;
-    ctx.lineWidth = settings.width * 0.19;
-    ctx.stroke(scratches);
-  }
-);
+    ctx.lineWidth = width * 0.19;
+    ctx.stroke(paths.scratches);
+  };
+}

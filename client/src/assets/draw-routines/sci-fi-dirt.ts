@@ -1,4 +1,8 @@
-import { defineDrawRoutine, shapePath } from "../../engine/draw-routines";
+import {
+  shapePath,
+  type DrawRoutine,
+  type RoutineSettings
+} from "../../engine/draw-routines";
 import { lerp, tau } from "../../engine/math";
 import { checkFields, color, positive, seededRandom } from "./brush-settings";
 
@@ -123,28 +127,16 @@ function bakeDirt(shadow: string, soil: string, oxide: string, mineral: string) 
   return tile;
 }
 
-export const sciFiDirt = defineDrawRoutine(
-  (call, source) => {
-    checkFields(call, ["shadow", "soil", "oxide", "mineral", "scale"], source);
-    const shadow = color(call, "shadow", source);
-    const soil = color(call, "soil", source);
-    const oxide = color(call, "oxide", source);
-    const mineral = color(call, "mineral", source);
-    const scale = positive(call, "scale", source);
-    let pattern: CanvasPattern | null = null;
-    return {
-      scale,
-      pattern(ctx: CanvasRenderingContext2D) {
-        return (pattern ??= ctx.createPattern(
-          bakeDirt(shadow, soil, oxide, mineral),
-          "repeat"
-        )!);
-      }
-    };
-  },
-  (ctx, shape, settings, frame) => {
-    const pattern = settings.pattern(ctx);
-    const scale = settings.scale;
+export function sciFiDirt(settings: RoutineSettings, source: string): DrawRoutine {
+  checkFields(settings, ["shadow", "soil", "oxide", "mineral", "scale"], source);
+  const shadow = color(settings, "shadow", source);
+  const soil = color(settings, "soil", source);
+  const oxide = color(settings, "oxide", source);
+  const mineral = color(settings, "mineral", source);
+  const scale = positive(settings, "scale", source);
+  let pattern: CanvasPattern | null = null;
+  return (ctx, shape, frame) => {
+    pattern ??= ctx.createPattern(bakeDirt(shadow, soil, oxide, mineral), "repeat")!;
     const angle = 0.12 + 0.24 * Math.sin(frame.seed * 1.83);
     const a = scale * Math.cos(angle),
       b = scale * Math.sin(angle);
@@ -159,5 +151,5 @@ export const sciFiDirt = defineDrawRoutine(
     });
     ctx.fillStyle = pattern;
     ctx.fill(shapePath(shape));
-  }
-);
+  };
+}
