@@ -2,6 +2,29 @@
   "width": 1360,
   "height": 720,
   "playerStart": [136, 634],
+  "fungalColonies": [
+    {
+      "id": "shelf-colony",
+      "seed": 37,
+      "nodes": [
+        { "id": "west", "position": [302, 600] },
+        { "id": "shelf", "position": [372, 586] },
+        { "id": "floor", "position": [412, 625] }
+      ],
+      "strands": [["west", "shelf"], ["shelf", "floor"]],
+      "tips": [
+        { "from": "west", "direction": [-0.7, -1] },
+        { "from": "west", "direction": [0.15, -1] },
+        { "from": "west", "direction": [1, -0.12] },
+        { "from": "shelf", "direction": [-1, 0.35] },
+        { "from": "shelf", "direction": [0.4, -1] },
+        { "from": "shelf", "direction": [1, -0.35] },
+        { "from": "floor", "direction": [-1, -0.65] },
+        { "from": "floor", "direction": [1, -0.2] },
+        { "from": "floor", "direction": [0.3, 1] }
+      ]
+    }
+  ],
   "ground": [
     {
       "vertices": [

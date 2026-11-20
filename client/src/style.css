@@ -24,3 +24,29 @@ html:has(#game-host) {
 #game-canvas:focus {
   outline: none;
 }
+
+.fungal-contact {
+  position: absolute;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 10px 8px 16px;
+  border: 1px solid #96665e;
+  border-radius: 6px;
+  background: #201d24f2;
+  color: #ffd7c1;
+  font:
+    500 14px/1.4 Inter,
+    system-ui,
+    sans-serif;
+}
+.fungal-contact button {
+  padding: 6px 10px;
+  border: 1px solid #986f68;
+  border-radius: 4px;
+  color: #fff2e9;
+  background: #49333b;
+  font: inherit;
+  cursor: pointer;
+}

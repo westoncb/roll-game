@@ -1,4 +1,5 @@
 import { Level, type GroundData, type Point } from "./level";
+import { readColonies } from "./fungus/config";
 
 function isDimension(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
@@ -52,6 +53,7 @@ export async function loadLevel(id: string, signal: AbortSignal): Promise<Level>
     width: data.width,
     height: data.height,
     playerStart: data.playerStart,
-    ground: data.ground
+    ground: data.ground,
+    fungalColonies: readColonies("fungalColonies" in data ? data.fungalColonies : undefined)
   });
 }

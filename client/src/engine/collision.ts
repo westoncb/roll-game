@@ -186,3 +186,57 @@ export function sweepCircle(
   }
   return first;
 }
+
+/** First contact of a swept disk with a capsule. Equal endpoints describe a circle.
+ * The returned point is on the stationary collider, including for an initial overlap. */
+export function castCapsule(
+  from: vec2,
+  to: vec2,
+  movingRadius: number,
+  a: vec2,
+  b: vec2,
+  radius: number
+) {
+  const dx = to[0] - from[0],
+    dy = to[1] - from[1];
+  const speed2 = dx * dx + dy * dy;
+  const reach = movingRadius + radius;
+  const point = closestPointOnSegment(vec2.create(), from, a, b);
+  let fraction = Infinity;
+  if (vec2.squaredDistance(point, from) <= reach * reach) fraction = 0;
+  else if (speed2 > 0) {
+    // Enter either round cap or one of the two parallel sides.
+    for (const center of [a, b]) {
+      const x = from[0] - center[0],
+        y = from[1] - center[1];
+      const proj = -(x * dx + y * dy);
+      const disc = proj * proj - speed2 * (x * x + y * y - reach * reach);
+      if (proj < 0 || disc < 0) continue;
+      const t = (proj - Math.sqrt(disc)) / speed2;
+      if (t >= 0 && t <= 1) fraction = Math.min(fraction, t);
+    }
+    const length = vec2.distance(a, b);
+    if (length) {
+      const tx = (b[0] - a[0]) / length,
+        ty = (b[1] - a[1]) / length;
+      const x = from[0] - a[0],
+        y = from[1] - a[1];
+      const distance = y * tx - x * ty,
+        velocity = dy * tx - dx * ty;
+      if (distance * velocity < 0) {
+        const t = (Math.sign(distance) * reach - distance) / velocity;
+        const along = (x + t * dx) * tx + (y + t * dy) * ty;
+        if (t >= 0 && t <= 1 && along >= 0 && along <= length)
+          fraction = Math.min(fraction, t);
+      }
+    }
+  }
+  if (!Number.isFinite(fraction)) return null;
+  const center = vec2.lerp(vec2.create(), from, to, fraction);
+  closestPointOnSegment(point, center, a, b);
+  const normal = vec2.subtract(vec2.create(), center, point);
+  if (!vec2.squaredLength(normal)) vec2.set(normal, speed2 ? -dx : 1, -dy);
+  vec2.normalize(normal, normal);
+  vec2.scaleAndAdd(point, point, normal, radius);
+  return { fraction, point, normal };
+}

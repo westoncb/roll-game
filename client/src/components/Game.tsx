@@ -9,6 +9,8 @@ export function Game() {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState("");
+  const [contact, setContact] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -19,7 +21,9 @@ export function Game() {
     let stopGame: (() => void) | undefined;
     loadLevel("test", controller.signal)
       .then((level) => {
-        if (!controller.signal.aborted) stopGame = startGame(host, canvas, { level });
+        if (!controller.signal.aborted) {
+          stopGame = startGame(host, canvas, { level }, () => setContact(true));
+        }
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted)
@@ -29,20 +33,39 @@ export function Game() {
       controller.abort();
       stopGame?.();
     };
-  }, []);
+  }, [attempt]);
 
   return error ? (
     <p role="alert">Could not start the game. {error}</p>
   ) : (
     <div id="game-host" ref={hostRef}>
       <canvas id="game-canvas" ref={canvasRef} tabIndex={0} aria-label="Game canvas" />
+      {contact && (
+        <div className="fungal-contact">
+          <span role="status">Fungal contact</span>
+          <button
+            type="button"
+            onClick={() => {
+              setContact(false);
+              setAttempt((n) => n + 1);
+            }}
+          >
+            Restart level
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 const stepSeconds = 1 / 60;
 
-function startGame(host: HTMLElement, canvas: HTMLCanvasElement, game: GameState) {
+function startGame(
+  host: HTMLElement,
+  canvas: HTMLCanvasElement,
+  game: GameState,
+  onContact: () => void
+) {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not create a 2D canvas context.");
 
@@ -81,7 +104,9 @@ function startGame(host: HTMLElement, canvas: HTMLCanvasElement, game: GameState
     accumulator += Math.min(now - (previousTime ?? now), 50) / 1000;
     previousTime = now;
     while (accumulator >= stepSeconds) {
+      const previousContact = game.level.fungalContact;
       updateGame(game, input, stepSeconds);
+      if (!previousContact && game.level.fungalContact) onContact();
       input.keyChanges.length = 0;
       accumulator -= stepSeconds;
     }

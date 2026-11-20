@@ -40,3 +40,12 @@ export function largestFit(min: number, max: number, fits: (size: number) => boo
   }
   return min;
 }
+
+/** An independent, reproducible 32-bit random stream. */
+export function seededRandom(seed: number) {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
