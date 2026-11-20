@@ -33,20 +33,24 @@ export class Level {
 
   constructor(data: LevelData) {
     this.size = { width: data.width, height: data.height };
-    this.ground = data.ground.map(({ vertices, gravityScale = 1, style = "terrain" }) => {
-      const polygon = new GroundPolygon(
-        vertices.map(([x, y]) => vec2.fromValues(x, y)),
-        gravityScale
-      );
-      new Drawable2D(
-        {
-          shape: { kind: "polygon", vertices: polygon.vertices },
-          style: gameAssets.shapeStyles.get(style)
-        },
-        this.groundVisual
-      );
-      return polygon;
-    });
+    const terrainSeed = crypto.getRandomValues(new Uint32Array(1))[0];
+    this.ground = data.ground.map(
+      ({ vertices, gravityScale = 1, style = "terrain" }, i) => {
+        const polygon = new GroundPolygon(
+          vertices.map(([x, y]) => vec2.fromValues(x, y)),
+          gravityScale
+        );
+        const visual = new Drawable2D(
+          {
+            shape: { kind: "polygon", vertices: polygon.vertices },
+            style: gameAssets.shapeStyles.get(style)
+          },
+          this.groundVisual
+        );
+        visual.drawSeed = (terrainSeed + i) >>> 0;
+        return polygon;
+      }
+    );
     const worldMin = vec2.create();
     const worldMax = vec2.fromValues(data.width, data.height);
     for (const polygon of this.ground) {

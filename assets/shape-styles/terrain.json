@@ -10,6 +10,15 @@
       "scale": 1
     },
     {
+      "routine": "buriedDetails",
+      "spacing": 50,
+      "size": [21, 36],
+      "shadow": "#354549",
+      "stone": "#798b8a",
+      "light": "#c3bba2",
+      "bone": "#c1b397"
+    },
+    {
       "routine": "sketchBorder",
       "ink": "#090d13",
       "width": 5.5,
@@ -25,10 +34,20 @@
       "highlight": "#a8bb83"
     },
     {
+      "routine": "surfaceDetails",
+      "spacing": 64,
+      "size": [25, 32],
+      "shadow": "#3c484d",
+      "stone": "#9baaa6",
+      "light": "#e1d5ad",
+      "cap": "#d37b65",
+      "stem": "#d3bd92"
+    },
+    {
       "routine": "fungalStrands",
       "width": [32, 84],
       "height": [16, 48],
-      "spacing": 430,
+      "spacing": 360,
       "pixelSize": 2,
       "shadow": "#483c54",
       "filament": "#987991",

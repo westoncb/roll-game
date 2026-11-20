@@ -1,17 +1,21 @@
 import { fill, stroke } from "../engine/draw-routines";
 import { readShapeStyle } from "../engine/shape-style";
 import { AssetCatalog } from "./catalog";
+import { buriedDetails } from "./draw-routines/buried-details";
 import { fungalStrands } from "./draw-routines/fungal-strands";
 import { grass } from "./draw-routines/grass";
 import { sciFiDirt } from "./draw-routines/sci-fi-dirt";
 import { sketchBorder } from "./draw-routines/sketch-border";
+import { surfaceDetails } from "./draw-routines/surface-details";
 import { readParticleEffect } from "./particle-effect";
 
 const gameRoutines = {
   fill,
   stroke,
   sciFiDirt,
+  buriedDetails,
   sketchBorder,
+  surfaceDetails,
   fungalStrands,
   grass
 };
