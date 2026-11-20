@@ -7,7 +7,7 @@ export type Strand = { kind: "main"; trailId: symbol } | { kind: "minor" };
 export class FiberPoint {
   readonly incident: FiberSegment[] = [];
   source = false;
-  row = -1; // Scratch index during a nutrient solve.
+  row = -1; // After a solve, only gem-connected points have rows.
   constructor(
     readonly position: vec2,
     public supply: number
@@ -63,6 +63,7 @@ export class FiberNetwork {
   readonly segments = new Set<FiberSegment>();
   private readonly sources = new Set<FiberPoint>();
   private readonly solver = new NutrientSolver();
+  private connectedPointCount = 0;
   private dirty = false;
 
   constructor(
@@ -120,6 +121,7 @@ export class FiberNetwork {
   sever(s: FiberSegment) {
     if (!this.segments.delete(s)) return;
     s.dead = true;
+    s.health = 0;
     for (const p of [s.from, s.to]) {
       p.incident.splice(p.incident.indexOf(s), 1);
       if (!p.source && !p.incident.length) this.points.delete(p.position);
@@ -130,14 +132,28 @@ export class FiberNetwork {
 
   solve() {
     if (!this.dirty) return;
-    this.solver.solve(this.points.values(), this.sources, this.tuning.gemOutput);
+    this.connectedPointCount = this.solver.solve(
+      this.points.values(),
+      this.sources,
+      this.tuning.gemOutput
+    );
+    this.dirty = false;
+  }
+
+  shedDisconnected() {
+    this.solve();
+    if (this.connectedPointCount === this.points.size) return;
+    // Both ends of each edge belong to the same component. Removing whole unsourced
+    // components leaves the solved supply on every surviving point valid.
+    for (const s of this.segments) if (s.from.row < 0) this.sever(s);
     this.dirty = false;
   }
 
   growthFactor(p: FiberPoint) {
     const maintenance = this.tuning.maintenanceSupply;
     const available = Math.max(0, (p.supply - maintenance) / (1 - maintenance));
-    let health = p.source ? 1 : 0;
+    if (p.source) return available;
+    let health = 0;
     for (const s of p.incident) health = Math.max(health, s.health);
     return available * health;
   }

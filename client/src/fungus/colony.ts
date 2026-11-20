@@ -27,6 +27,7 @@ type Tip = {
   credit: number;
   strand: MainStrand;
   origin: Junction;
+  launchExit?: vec2;
   buds: Buds;
 };
 type Buds = { next: number; left: number; side: number; fan: number; length: number };
@@ -128,15 +129,13 @@ export class FungalColony implements Entity {
     if (data.tips) {
       for (const { from, direction } of data.tips) {
         const site = this.nodes.get(from)!.junction;
-        this.tips.push(this.newTip(site, Math.atan2(direction[1], direction[0]), 1));
+        this.launchFrom(site, Math.atan2(direction[1], direction[0]));
       }
     } else {
       for (const site of this.sites) {
         const phase = this.random() * tau;
         for (let i = 0; i < 6; i++)
-          this.tips.push(
-            this.newTip(site, phase + ((i + 0.3 * this.random()) * tau) / 6, 1)
-          );
+          this.launchFrom(site, phase + ((i + 0.3 * this.random()) * tau) / 6);
       }
     }
   }
@@ -159,7 +158,7 @@ export class FungalColony implements Entity {
   detachNode(node: FungalNode) {
     if (!this.nodes.delete(node.id)) return;
     // Tissue lived on its previous supply until this instant.
-    this.fabric.updateTissue(this.time);
+    this.updateTissue(this.time);
     node.junction.node = undefined;
     this.fabric.network.setSource(node.junction.position, false);
     this.fabric.network.solve();
@@ -242,6 +241,39 @@ export class FungalColony implements Entity {
       strand: mainStrand(),
       buds: this.newBuds()
     };
+  }
+
+  private launchFrom(site: Junction, preferredAngle?: number) {
+    const { growthStep, gemLaunchReach, mainRadius, mainSegmentsPerTile } = this.tuning;
+    if (!mainSegmentsPerTile) return;
+    const phase = preferredAngle ?? this.random() * tau;
+    const reach = Math.max(growthStep, gemLaunchReach);
+    const sample = vec2.create();
+    let best: { angle: number; exit: vec2; score: number } | undefined;
+    for (let i = 0; i < 12; i++) {
+      const angle = phase + (i * tau) / 12;
+      // Also try shorter routes in pockets where the full probe would cross terrain.
+      for (let d = reach; ; d = Math.max(growthStep, d / 2)) {
+        vec2.set(
+          sample,
+          site.position[0] + d * Math.cos(angle),
+          site.position[1] + d * Math.sin(angle)
+        );
+        const room = 1 - this.fabric.density(sample, "main") / mainSegmentsPerTile;
+        if (room > 0 && this.domain.clear(site.position, sample, mainRadius)) {
+          const score = room * d;
+          if (!best || score > best.score)
+            best = { angle, exit: vec2.clone(sample), score };
+          break;
+        }
+        if (d === growthStep) break;
+      }
+      if (best && (preferredAngle !== undefined || best.score === reach)) break;
+    }
+    if (!best) return;
+    const tip = this.newTip(site, best.angle, 1);
+    if (this.fabric.crowded(site.position, "main")) tip.launchExit = best.exit;
+    this.tips.push(tip);
   }
 
   private depositMain(a: vec2, b: vec2, strand: MainStrand, buds: Buds) {
@@ -342,9 +374,23 @@ export class FungalColony implements Entity {
   }
 
   private propose(tip: Tip): Proposal | null {
-    if (this.fabric.crowded(tip.p, "main")) return null;
     const { followRadius, attractionRadius, matureTipTicks, growthStep, mainRadius } =
       this.tuning;
+    // Cross a crowded gem tile one normal deposit at a time toward the clear exit.
+    if (tip.launchExit && this.fabric.crowded(tip.p, "main")) {
+      if (this.fabric.crowded(tip.launchExit, "main")) return null;
+      const distance = vec2.distance(tip.p, tip.launchExit);
+      const p = vec2.lerp(
+        vec2.create(),
+        tip.p,
+        tip.launchExit,
+        Math.min(1, growthStep / distance)
+      );
+      return this.domain.clear(tip.p, p, mainRadius)
+        ? { tip, p, angle: tip.angle, bend: 0 }
+        : null;
+    }
+    tip.launchExit = undefined;
     let follow = 0,
       attract = 0,
       nearest = followRadius;
@@ -391,7 +437,8 @@ export class FungalColony implements Entity {
         tip.p[0] + growthStep * Math.cos(angle),
         tip.p[1] + growthStep * Math.sin(angle)
       );
-      if (this.domain.clear(tip.p, p, mainRadius)) return { tip, p, angle, bend };
+      if (!this.fabric.crowded(p, "main") && this.domain.clear(tip.p, p, mainRadius))
+        return { tip, p, angle, bend };
     }
     return null;
   }
@@ -416,12 +463,18 @@ export class FungalColony implements Entity {
     const proposals: Proposal[] = [],
       waiting: Proposal[] = [],
       next: Tip[] = [];
+    const network = this.fabric.network;
+    for (const node of this.nodes.values()) {
+      const point = network.points.get(node.junction.position)!;
+      if (node.readyToLaunch(this.tuning.tickSeconds, network.growthFactor(point)))
+        this.launchFrom(node.junction);
+    }
     for (const tip of this.tips) {
-      const point = this.fabric.network.points.get(tip.p);
+      const point = network.points.get(tip.p);
       if (!point) continue;
       // Fixed-length deposits keep branch probability, density and bud spacing per unit
       // of growth. A living, underfed tip can resume if another route supplies it.
-      tip.credit += this.fabric.network.growthFactor(point);
+      tip.credit += tip.weight * network.growthFactor(point);
       if (tip.credit < 1) {
         waiting.push({ tip, p: tip.p, angle: tip.angle, bend: tip.bend });
         continue;
@@ -481,7 +534,7 @@ export class FungalColony implements Entity {
           this.newTip(
             site,
             Math.hypot(x, y) < 0.1 * (w + v) ? a.angle : Math.atan2(y, x),
-            w + v
+            Math.min(1, w + v)
           )
         );
       } else {
@@ -500,6 +553,10 @@ export class FungalColony implements Entity {
       t.p = p.p;
       t.angle = p.angle;
       t.bend = p.bend;
+      if (t.launchExit) {
+        next.push(t);
+        continue;
+      }
       t.age++;
       const splits =
         t.age >= matureTipTicks &&
@@ -512,7 +569,7 @@ export class FungalColony implements Entity {
         continue;
       }
       const branch = junction(t.p, 1);
-      // Branch knots support local growth. Authored knots and fusion sites recruit tips.
+      // Branch knots launch heads too. Only authored knots and fusion sites attract fusions.
       if (formsKnot) this.mature(branch);
       if (splits) {
         const spread = 0.37 + 0.33 * this.random();
@@ -524,6 +581,14 @@ export class FungalColony implements Entity {
     }
     this.tips = next;
     this.growFilaments();
+  }
+
+  private updateTissue(time: number) {
+    this.fabric.updateTissue(time);
+    const points = this.fabric.network.points;
+    this.sites = this.sites.filter((site) => points.has(site.position));
+    this.tips = this.tips.filter((tip) => points.has(tip.p));
+    this.filaments = this.filaments.filter((filament) => points.has(filament.p));
   }
 
   update(dt: number) {
@@ -540,10 +605,7 @@ export class FungalColony implements Entity {
         this.pulses = this.pulses.filter((pulse) => pulse.advance(until, this.fabric));
       if (until === tissueAt) {
         this.tissueTick++;
-        this.fabric.updateTissue(until);
-        this.sites = this.sites.filter((site) =>
-          this.fabric.network.points.has(site.position)
-        );
+        this.updateTissue(until);
       }
       if (until === growthAt) this.grow();
     }

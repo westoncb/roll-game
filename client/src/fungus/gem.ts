@@ -59,6 +59,7 @@ export class FungalNode implements Entity {
   readonly radius: number;
   readonly visual: Drawable2D;
   private age: number;
+  private launchCredit = 0;
   private opacity = 1;
   private trip: ReturnTrip | null = null;
   constructor(
@@ -81,6 +82,16 @@ export class FungalNode implements Entity {
 
   get reeling() {
     return this.trip?.phase === "reeling";
+  }
+
+  readyToLaunch(dt: number, growthFactor: number) {
+    if (this.age < this.colony.tuning.gemGrowSeconds) return false;
+    const interval = this.colony.tuning.gemLaunchSeconds;
+    this.launchCredit += dt * growthFactor;
+    if (this.launchCredit < interval) return false;
+    // One search per charge, including when the whole neighborhood is saturated.
+    this.launchCredit %= interval;
+    return true;
   }
 
   growIn(dt: number) {

@@ -108,13 +108,17 @@ export class FungalFabric {
     return tile;
   }
 
-  crowded(p: vec2, kind: Strand["kind"]) {
+  density(p: vec2, kind: Strand["kind"]) {
     const tile = this.tiles.get(
       tileKey(Math.floor(p[0] / tileSize), Math.floor(p[1] / tileSize))
     );
-    return kind === "main"
-      ? (tile?.mainDensity ?? 0) >= this.tuning.mainSegmentsPerTile
-      : (tile?.minorDensity ?? 0) >= this.tuning.minorSegmentsPerTile;
+    return kind === "main" ? (tile?.mainDensity ?? 0) : (tile?.minorDensity ?? 0);
+  }
+
+  crowded(p: vec2, kind: Strand["kind"]) {
+    const limit =
+      kind === "main" ? this.tuning.mainSegmentsPerTile : this.tuning.minorSegmentsPerTile;
+    return this.density(p, kind) >= limit;
   }
 
   private *segmentTiles(s: FiberSegment) {
@@ -204,15 +208,17 @@ export class FungalFabric {
 
   updateTissue(time: number) {
     if (time <= this.time) return;
-    this.network.solve();
     const dt = time - this.time;
     this.time = time;
+    this.network.shedDisconnected();
     const t = this.tuning;
     const widthBlend = -Math.expm1(-dt / t.widthResponseSeconds);
     let severed = false;
     for (const s of this.network.segments) {
       const supply = s.supply;
-      let change = (dt * (supply / t.maintenanceSupply - 1)) / t.starvationSeconds;
+      const balance = supply / t.maintenanceSupply - 1;
+      let change = (dt * balance) / t.starvationSeconds;
+      if (balance < 0) change *= 1 + t.lowSupplyDecayBoost * balance ** 2;
       if (s.wound) {
         const age = time - s.wound.start;
         const dose = woundDose(age, t);
@@ -247,7 +253,7 @@ export class FungalFabric {
       s.healthBand = healthBand;
       s.supplyBand = supplyBand;
     }
-    if (severed) this.network.solve();
+    if (severed) this.network.shedDisconnected();
     this.crumble(time);
   }
 

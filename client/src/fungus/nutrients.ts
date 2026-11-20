@@ -140,6 +140,7 @@ export class NutrientSolver {
           r.childWeight * (r.child?.point.supply ?? 0);
       r.point.supply = Math.max(0, Math.min(1, r.point.supply));
     }
+    return this.count;
   }
 
   private solveCore() {

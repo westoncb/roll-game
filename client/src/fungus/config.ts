@@ -14,6 +14,8 @@ export const defaultColonyTuning = {
   followRadius: 13,
   meanSplitLength: 95, // Mean distance between split attempts on an eligible tip.
   minSplitWeight: 0.5,
+  gemLaunchSeconds: 6, // Time for an unloaded, mature gem to earn a new main head.
+  gemLaunchReach: 56, // Distance to look for open growing space around a gem.
 
   // A split or a new group of minor buds can form a gem this far from other gems.
   branchKnotSpacing: 108,
@@ -30,7 +32,8 @@ export const defaultColonyTuning = {
   minorConductance: 0.08, // Relative to main fibers of the same length.
   minorUptake: 0.08,
   maintenanceSupply: 0.22, // Below this supply, tissue loses health and tips pause.
-  starvationSeconds: 5, // Time for fully healthy, completely unfed tissue to die.
+  starvationSeconds: 5, // Base time scale for connected tissue loss and recovery.
+  lowSupplyDecayBoost: 7, // Extra decay at near-zero supply, scaled by squared deficit.
   minWidthFraction: 0.45, // mainRadius/minorRadius are the fully fed radii.
   widthResponseSeconds: 0.6,
   ashHoldSeconds: 0.3, // Nonconducting, harmless gray fiber before flakes fall.
@@ -106,6 +109,7 @@ function validTuning(key: keyof ColonyTuning, value: number) {
     case "gemGrowSeconds":
     case "gemCollectSeconds":
     case "ashHoldSeconds":
+    case "lowSupplyDecayBoost":
     case "meanExtraBudGroupGap":
       return value >= 0;
     default:
