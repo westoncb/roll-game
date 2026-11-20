@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { vec2 } from "gl-matrix";
-import { Camera } from "../camera";
-import { updateGame, type GameState } from "../game";
-import { listenForInput, type InputState } from "../input";
+import { Camera } from "../engine/camera";
+import { gameKeys, updateGame, type GameState } from "../game";
+import { listenForInput, type InputState } from "../engine/input";
 import { loadLevel } from "../level-loader";
 
 export function Game() {
@@ -72,7 +72,7 @@ function startGame(host: HTMLElement, canvas: HTMLCanvasElement, game: GameState
     keyChanges: [],
     mousePos: vec2.create()
   };
-  const stopInput = listenForInput(canvas, input, camera);
+  const stopInput = listenForInput(canvas, input, camera, gameKeys);
   let previousTime: number | undefined;
   let accumulator = 0;
   let frameId: number;

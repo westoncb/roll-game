@@ -1,8 +1,8 @@
 import { vec2 } from "gl-matrix";
 import { gameAssets } from "../assets";
-import { nearbyEdges } from "../collision";
-import { Drawable2D } from "../drawable";
-import type { Entity } from "../entity";
+import { nearbyEdges } from "../engine/collision";
+import { Drawable2D } from "../engine/drawable";
+import type { Entity } from "../engine/entity";
 import {
   fitCrouchGrips,
   planFootholds,
@@ -14,18 +14,18 @@ import {
   type LegStance,
   type Pose
 } from "./foothold";
-import type { GroundEdge, GroundPolygon } from "../ground";
-import type { InputState } from "../input";
+import type { GroundEdge, GroundPolygon } from "../engine/ground";
+import type { InputState } from "../engine/input";
 import { PlayerScreen } from "./screen";
 import { PlayerGun, type CastBeam } from "./gun";
-import type { EffectPlayer } from "../particles/system";
+import type { EffectPlayer } from "../engine/particles/system";
 import {
   collectContacts,
   gravityAt,
   moveAtVelocity,
   stepPhysics,
   PhysicsBody
-} from "../physics";
+} from "../engine/physics";
 import {
   halfSole,
   legSpacing,
@@ -44,7 +44,14 @@ import {
   surfacePose,
   type Support
 } from "./walking";
-import { angleDifference, approach, approachAngle, largestFit, lerp, tau } from "../util";
+import {
+  angleDifference,
+  approach,
+  approachAngle,
+  largestFit,
+  lerp,
+  tau
+} from "../engine/math";
 
 const { leg: legConfig, foot, shell, movement, jump, colors } = playerConfig;
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.

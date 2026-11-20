@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ParticleEffect } from "../../particles/emitter";
+import type { ParticleEffect } from "../../engine/particles/emitter";
 import { readParticleEffect } from "../../assets/particle-effect";
 import { Parameters } from "./Parameters";
 import { Preview } from "./Preview";

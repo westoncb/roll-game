@@ -1,6 +1,6 @@
 import { mat2d, vec2, type ReadonlyMat2d, type ReadonlyVec2 } from "gl-matrix";
 import { appendTransform, applyMatrix, Transform2D } from "./transform";
-import { lerp } from "./util";
+import { lerp } from "./math";
 
 type Draw = (ctx: CanvasRenderingContext2D) => void;
 type DrawableColor = string | { fill: string; stroke: string };

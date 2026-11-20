@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ParticleSystem } from "../../particles/system";
-import type { ParticleEffect } from "../../particles/emitter";
+import { ParticleSystem } from "../../engine/particles/system";
+import type { ParticleEffect } from "../../engine/particles/emitter";
 
 export function Preview({ effect }: { effect: ParticleEffect | null }) {
   const canvas = useRef<HTMLCanvasElement>(null);

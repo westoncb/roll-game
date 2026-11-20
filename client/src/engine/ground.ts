@@ -38,19 +38,4 @@ export class GroundPolygon {
       return { ground: this, index, a, b, tangent, normal, length };
     });
   }
-
-  draw(ctx: CanvasRenderingContext2D) {
-    ctx.beginPath();
-    const first = this.vertices[0];
-    ctx.moveTo(first[0], first[1]);
-    for (let i = 1; i < this.vertices.length; i++) {
-      const vertex = this.vertices[i];
-      ctx.lineTo(vertex[0], vertex[1]);
-    }
-    ctx.closePath();
-    ctx.fillStyle = "#375555";
-    ctx.fill();
-    ctx.strokeStyle = "#90afa0";
-    ctx.stroke();
-  }
 }

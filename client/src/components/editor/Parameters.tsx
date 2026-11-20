@@ -1,4 +1,4 @@
-import type { Emitter } from "../../particles/emitter";
+import type { Emitter } from "../../engine/particles/emitter";
 
 const names: Record<string, string> = {
   pass: "Draw pass",

@@ -1,5 +1,14 @@
-import type { InputState } from "./input";
+import type { InputState } from "./engine/input";
 import type { Level } from "./level";
+
+export const gameKeys: ReadonlySet<string> = new Set([
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Space",
+  "KeyF"
+]);
 
 export type GameState = { level: Level };
 

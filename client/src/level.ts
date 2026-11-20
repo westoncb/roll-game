@@ -1,11 +1,11 @@
 import { vec2 } from "gl-matrix";
-import { castSegment } from "./collision";
-import type { Entity } from "./entity";
+import { castSegment } from "./engine/collision";
+import type { Entity } from "./engine/entity";
 import { GravityField } from "./gravity-field";
-import { GroundPolygon } from "./ground";
-import type { InputState } from "./input";
-import { ParticleSystem } from "./particles/system";
-import { stepPhysics } from "./physics";
+import { GroundPolygon } from "./engine/ground";
+import type { InputState } from "./engine/input";
+import { ParticleSystem } from "./engine/particles/system";
+import { stepPhysics } from "./engine/physics";
 import { Player } from "./player/player";
 
 export type Point = [number, number];
@@ -84,9 +84,25 @@ export class Level {
   draw(ctx: CanvasRenderingContext2D, alpha = 1) {
     for (const entity of this.entities) entity.visual.samplePose(alpha);
     this.gravityField.draw(ctx, alpha);
-    for (const polygon of this.ground) polygon.draw(ctx);
+    for (const polygon of this.ground) drawGround(ctx, polygon);
     this.particles.draw(ctx, "behind", alpha);
     for (const entity of this.entities) entity.visual.paintSampled(ctx);
     this.particles.draw(ctx, "front", alpha);
   }
+}
+
+function drawGround(ctx: CanvasRenderingContext2D, { vertices }: GroundPolygon) {
+  ctx.beginPath();
+  ctx.moveTo(vertices[0][0], vertices[0][1]);
+  for (let i = 1; i < vertices.length; i++) {
+    const vertex = vertices[i];
+    ctx.lineTo(vertex[0], vertex[1]);
+  }
+  ctx.closePath();
+  // TODO: Clip a texture asset's blended pattern layers to this path,
+  // allowing each layer to animate its own transform.
+  ctx.fillStyle = "#375555";
+  ctx.fill();
+  ctx.strokeStyle = "#90afa0";
+  ctx.stroke();
 }

@@ -1,5 +1,5 @@
 import { mat2d, vec2, type ReadonlyMat2d, type ReadonlyVec2 } from "gl-matrix";
-import { angleDifference } from "./util";
+import { angleDifference } from "./math";
 
 export class Transform2D {
   readonly position = vec2.create();

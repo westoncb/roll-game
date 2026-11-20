@@ -12,23 +12,16 @@ export type InputState = {
 export function listenForInput(
   canvas: HTMLCanvasElement,
   input: InputState,
-  camera: Camera
+  camera: Camera,
+  capturedKeys: ReadonlySet<string>
 ): () => void {
   const controller = new AbortController();
   const options = { signal: controller.signal };
-  const gameKeys = new Set([
-    "ArrowLeft",
-    "ArrowRight",
-    "ArrowUp",
-    "ArrowDown",
-    "Space",
-    "KeyF"
-  ]);
 
   canvas.addEventListener(
     "keydown",
     (event) => {
-      if (!gameKeys.has(event.code) || event.metaKey || event.ctrlKey || event.altKey)
+      if (!capturedKeys.has(event.code) || event.metaKey || event.ctrlKey || event.altKey)
         return;
       event.preventDefault();
       if (event.repeat || input.keysDown.has(event.code)) return;

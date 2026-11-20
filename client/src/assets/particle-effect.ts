@@ -1,4 +1,4 @@
-import type { Emitter, ParticleEffect } from "../particles/emitter.ts";
+import type { Emitter, ParticleEffect } from "../engine/particles/emitter.ts";
 
 type Check = (value: unknown) => boolean;
 

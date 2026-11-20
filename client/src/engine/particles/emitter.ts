@@ -1,5 +1,5 @@
 import type { ReadonlyMat2d } from "gl-matrix";
-import { lerp } from "../util.ts";
+import { lerp } from "../math.ts";
 import type { Particle } from "./particle.ts";
 
 /** A range is sampled uniformly once per particle at birth. */

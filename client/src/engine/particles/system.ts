@@ -1,6 +1,6 @@
 import { mat2d, type ReadonlyMat2d, type ReadonlyVec2 } from "gl-matrix";
 import type { Drawable2D } from "../drawable";
-import { lerp } from "../util";
+import { lerp } from "../math";
 import {
   EmitterState,
   type ParticleEffect,

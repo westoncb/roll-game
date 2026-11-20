@@ -1,8 +1,8 @@
 import { vec2 } from "gl-matrix";
-import { Drawable2D } from "../drawable";
+import { Drawable2D } from "../engine/drawable";
 import { playerConfig } from "./config";
 import type { PlayerGun } from "./gun";
-import { approachAngle, tau } from "../util";
+import { approachAngle, tau } from "../engine/math";
 
 const { screen } = playerConfig;
 const characterSeconds = 0.12;

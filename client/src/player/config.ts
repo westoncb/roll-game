@@ -1,4 +1,4 @@
-import { tau } from "../util";
+import { tau } from "../engine/math";
 
 // Distances are in world units, angles in radians, and times in seconds.
 export const playerConfig = {
