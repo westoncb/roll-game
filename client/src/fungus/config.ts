@@ -23,6 +23,15 @@ export const defaultColonyTuning = {
   gemGrowSeconds: 0.38,
   gemCollectSeconds: 0.22,
 
+  // Extraction sends a pulse along fibers. Strength at path distance d is exp(-d / decayLength).
+  woundSpeed: 90, // World units of fiber traveled per second.
+  woundDecayLength: 52,
+  woundMinStrength: 0.14, // Stop propagation below this strength.
+  woundKillStrength: 0.01, // Weaker hits dim and recover.
+  woundFlashSeconds: 0.2,
+  woundWitherSeconds: 0.32,
+  woundRecoverSeconds: 0.65,
+
   mainRadius: 1.35,
   minorRadius: 0.6,
   mainSegmentsPerTile: 180, // Local saturation stops further growth of that strand type.
@@ -66,6 +75,9 @@ function validTuning(key: keyof ColonyTuning, value: number) {
       return Number.isSafeInteger(value) && value >= 0;
     case "minorForkChance":
       return value >= 0 && value <= 1;
+    case "woundMinStrength":
+    case "woundKillStrength":
+      return value > 0 && value <= 1;
     case "branchKnotSpacing":
     case "fusionKnotSpacingRadii":
     case "mergeRadius":

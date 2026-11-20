@@ -38,6 +38,7 @@ export function colonyPalette(primary = defaultPrimaryColor) {
     primary,
     minor: tint(primary, "#38394e", 32),
     tip: tint(primary, "white", 42),
+    wound: tint(gem, "white", 72),
     gem,
     facets: [
       mid,

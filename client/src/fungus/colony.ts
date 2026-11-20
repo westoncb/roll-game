@@ -13,6 +13,7 @@ import { GrowthDomain } from "./domain";
 import { FungalNode } from "./gem";
 import { colonyPalette, type ColonyPalette } from "./palette";
 import { FungalFabric, type Junction, type MainStrand, type MinorStrand } from "./fabric";
+import { WoundPulse } from "./wound";
 
 type Tip = {
   p: vec2;
@@ -61,9 +62,11 @@ export class FungalColony implements Entity {
   readonly tuning: Readonly<ColonyTuning>;
   readonly fabric: FungalFabric;
   private readonly detached = new Set<FungalNode>();
+  private readonly liveKnots = new Set<vec2>();
+  private pulses: WoundPulse[] = [];
+  private woundTime = 0;
   readonly visual = new Drawable2D((ctx) => {
-    if (!this.nodes.size) ctx.globalAlpha *= 0.25;
-    this.fabric.draw(ctx);
+    this.fabric.draw(ctx, this.nodes.size ? 1 : 0.25);
     ctx.fillStyle = this.palette.tip;
     ctx.beginPath();
     for (const tip of this.tips) {
@@ -74,7 +77,7 @@ export class FungalColony implements Entity {
   });
   private tips: Tip[] = [];
   private filaments: Filament[] = [];
-  private readonly sites: Junction[] = [];
+  private sites: Junction[] = [];
   private readonly random;
   private readonly minorRandom;
   private time = 0;
@@ -115,7 +118,10 @@ export class FungalColony implements Entity {
       const count = Math.ceil(vec2.distance(a.position, b.position) / 6);
       let previous = a.position;
       for (let i = 1; i <= count; i++) {
-        const p = vec2.lerp(vec2.create(), a.position, b.position, i / count);
+        const p =
+          i === count
+            ? b.position
+            : vec2.lerp(vec2.create(), a.position, b.position, i / count);
         this.depositMain(previous, p, strand, buds);
         previous = p;
       }
@@ -139,6 +145,7 @@ export class FungalColony implements Entity {
   private addNode(id: string, site: Junction, growing: boolean) {
     site.node = new FungalNode(id, site, this, growing);
     this.nodes.set(id, site.node);
+    this.liveKnots.add(site.position);
     this.fabric.enclose(site.position, site.node.radius);
   }
 
@@ -151,8 +158,10 @@ export class FungalColony implements Entity {
   }
 
   detachNode(node: FungalNode) {
-    this.nodes.delete(node.id);
+    if (!this.nodes.delete(node.id)) return;
     node.junction.node = undefined;
+    this.liveKnots.delete(node.junction.position);
+    this.pulses.push(new WoundPulse(node.junction.position, this.woundTime, this.tuning));
     const index = this.sites.indexOf(node.junction);
     if (index >= 0) this.sites.splice(index, 1);
     this.detached.add(node);
@@ -232,12 +241,12 @@ export class FungalColony implements Entity {
   }
 
   private depositMain(a: vec2, b: vec2, strand: MainStrand, buds: Buds) {
-    this.fabric.deposit(a, b, strand, this.tick);
     const length = vec2.distance(a, b);
     if (!length) return false;
     const tangent = Math.atan2(b[1] - a[1], b[0] - a[0]);
     const rand = this.minorRandom;
     let startedBudGroup = false;
+    let roots: vec2[] | undefined;
     while (buds.next <= length) {
       if (!buds.left) {
         startedBudGroup = true;
@@ -247,6 +256,7 @@ export class FungalColony implements Entity {
         buds.length = 10 + 43 * rand() ** 1.45;
       }
       const root = vec2.lerp(vec2.create(), a, b, buds.next / length);
+      (roots ??= []).push(root);
       const bias = buds.fan + 0.55 * (2 * rand() - 1);
       const budget = buds.length * (0.6 + 0.95 * rand());
       this.filaments.push({
@@ -267,6 +277,7 @@ export class FungalColony implements Entity {
       buds.next += buds.left ? 0.8 + 1.9 * rand() : this.gap();
     }
     buds.next -= length;
+    this.fabric.deposit(a, b, strand, this.tick, roots);
     return startedBudGroup;
   }
 
@@ -479,6 +490,19 @@ export class FungalColony implements Entity {
   }
 
   update(dt: number) {
+    this.woundTime += dt;
+    if (this.pulses.length) {
+      const severed = new Set<vec2>();
+      this.pulses = this.pulses.filter((pulse) =>
+        pulse.advance(this.woundTime, this.fabric, this.liveKnots, severed)
+      );
+      if (severed.size) {
+        this.tips = this.tips.filter((t) => !severed.has(t.p));
+        this.filaments = this.filaments.filter((f) => !severed.has(f.p));
+        this.sites = this.sites.filter((site) => !severed.has(site.position));
+      }
+    }
+    this.fabric.updateReactions(this.woundTime);
     if (!this.nodes.size) return;
     for (const node of this.nodes.values()) node.growIn(dt);
     this.time += dt;
