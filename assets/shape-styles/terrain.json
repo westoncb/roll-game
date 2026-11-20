@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "layers": [
+    { "kind": "fill", "color": "#375555" },
+    { "kind": "stroke", "color": "#90afa0", "width": 1 }
+  ]
+}

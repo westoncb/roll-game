@@ -1,8 +1,9 @@
 import { mat2d, vec2, type ReadonlyMat2d, type ReadonlyVec2 } from "gl-matrix";
 import { appendTransform, applyMatrix, Transform2D } from "./transform";
 import { lerp } from "./math";
+import { drawShape, type StyledShape } from "./shape";
 
-type Draw = (ctx: CanvasRenderingContext2D) => void;
+export type DrawableContent = ((ctx: CanvasRenderingContext2D) => void) | StyledShape;
 type DrawableColor = string | { fill: string; stroke: string };
 
 /** Draws in local coordinates. Children paint after their parent, in creation order. */
@@ -18,7 +19,7 @@ export class Drawable2D extends Transform2D {
   private readonly sampledWorld = mat2d.create();
 
   constructor(
-    private readonly draw?: Draw,
+    public content?: DrawableContent,
     parent?: Drawable2D
   ) {
     super(parent);
@@ -84,7 +85,7 @@ export class Drawable2D extends Transform2D {
   }
 
   paintSampled(ctx: CanvasRenderingContext2D) {
-    if (this.draw) {
+    if (this.content) {
       ctx.save();
       applyMatrix(ctx, this.sampledWorld);
       const color = this.paintColor;
@@ -93,7 +94,8 @@ export class Drawable2D extends Transform2D {
         ctx.fillStyle = color.fill;
         ctx.strokeStyle = color.stroke;
       }
-      this.draw(ctx);
+      if (typeof this.content === "function") this.content(ctx);
+      else drawShape(ctx, this.content);
       ctx.restore();
     }
     for (const child of this.children) child.paintSampled(ctx);

@@ -1,5 +1,7 @@
 import { vec2 } from "gl-matrix";
+import { gameAssets } from "./assets";
 import { castSegment } from "./engine/collision";
+import { Drawable2D } from "./engine/drawable";
 import type { Entity } from "./engine/entity";
 import { GravityField } from "./gravity-field";
 import { GroundPolygon } from "./engine/ground";
@@ -9,7 +11,7 @@ import { stepPhysics } from "./engine/physics";
 import { Player } from "./player/player";
 
 export type Point = [number, number];
-export type GroundData = { vertices: Point[]; gravityScale?: number };
+export type GroundData = { vertices: Point[]; gravityScale?: number; style?: string };
 export type LevelData = {
   width: number;
   height: number;
@@ -22,18 +24,26 @@ export class Level {
   readonly size: Readonly<{ width: number; height: number }>;
   readonly player: Player;
   readonly ground: GroundPolygon[];
+  private readonly groundVisual = new Drawable2D();
   private readonly gravityField: GravityField;
   readonly entities: Entity[];
 
   constructor(data: LevelData) {
     this.size = { width: data.width, height: data.height };
-    this.ground = data.ground.map(
-      (polygon) =>
-        new GroundPolygon(
-          polygon.vertices.map(([x, y]) => vec2.fromValues(x, y)),
-          polygon.gravityScale ?? 1
-        )
-    );
+    this.ground = data.ground.map(({ vertices, gravityScale = 1, style = "terrain" }) => {
+      const polygon = new GroundPolygon(
+        vertices.map(([x, y]) => vec2.fromValues(x, y)),
+        gravityScale
+      );
+      new Drawable2D(
+        {
+          shape: { kind: "polygon", vertices: polygon.vertices },
+          style: gameAssets.shapeStyles.get(style)
+        },
+        this.groundVisual
+      );
+      return polygon;
+    });
     const worldMin = vec2.create();
     const worldMax = vec2.fromValues(data.width, data.height);
     for (const polygon of this.ground) {
@@ -84,25 +94,9 @@ export class Level {
   draw(ctx: CanvasRenderingContext2D, alpha = 1) {
     for (const entity of this.entities) entity.visual.samplePose(alpha);
     this.gravityField.draw(ctx, alpha);
-    for (const polygon of this.ground) drawGround(ctx, polygon);
+    this.groundVisual.render(ctx, alpha);
     this.particles.draw(ctx, "behind", alpha);
     for (const entity of this.entities) entity.visual.paintSampled(ctx);
     this.particles.draw(ctx, "front", alpha);
   }
-}
-
-function drawGround(ctx: CanvasRenderingContext2D, { vertices }: GroundPolygon) {
-  ctx.beginPath();
-  ctx.moveTo(vertices[0][0], vertices[0][1]);
-  for (let i = 1; i < vertices.length; i++) {
-    const vertex = vertices[i];
-    ctx.lineTo(vertex[0], vertex[1]);
-  }
-  ctx.closePath();
-  // TODO: Clip a texture asset's blended pattern layers to this path,
-  // allowing each layer to animate its own transform.
-  ctx.fillStyle = "#375555";
-  ctx.fill();
-  ctx.strokeStyle = "#90afa0";
-  ctx.stroke();
 }

@@ -2,6 +2,7 @@ import { vec2 } from "gl-matrix";
 import { gameAssets } from "../assets";
 import { nearbyEdges } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
+import type { StyledShape } from "../engine/shape";
 import type { Entity } from "../engine/entity";
 import {
   fitCrouchGrips,
@@ -54,6 +55,17 @@ import {
 } from "../engine/math";
 
 const { leg: legConfig, foot, shell, movement, jump, colors } = playerConfig;
+const shellShape: StyledShape = {
+  shape: {
+    kind: "rect",
+    x: -shell.size / 2,
+    y: -shell.size / 2,
+    width: shell.size,
+    height: shell.size,
+    cornerRadius: shell.cornerRadius
+  },
+  style: { layers: [{ kind: "fill" }, { kind: "stroke", width: shell.borderWidth }] }
+};
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.
 const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 
@@ -153,7 +165,7 @@ export class Player implements Entity {
     (ankle) => new Drawable2D(drawAnkleJoint, ankle)
   );
   private readonly gun = new PlayerGun(this.visual, this.stance);
-  private readonly shell = new Drawable2D(drawShell, this.stance);
+  private readonly shell = new Drawable2D(shellShape, this.stance);
   private readonly screen = new PlayerScreen(this.shell, this.gun);
   private displayedCharge?: number;
 
@@ -674,19 +686,5 @@ function drawAnkleJoint(ctx: CanvasRenderingContext2D) {
   ctx.arc(0, 0, radius, 0, tau);
   ctx.fill();
   ctx.lineWidth = borderWidth;
-  ctx.stroke();
-}
-
-function drawShell(ctx: CanvasRenderingContext2D) {
-  ctx.beginPath();
-  ctx.roundRect(
-    -shell.size / 2,
-    -shell.size / 2,
-    shell.size,
-    shell.size,
-    shell.cornerRadius
-  );
-  ctx.fill();
-  ctx.lineWidth = shell.borderWidth;
   ctx.stroke();
 }
