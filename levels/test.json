@@ -6,6 +6,7 @@
     {
       "id": "shelf-colony",
       "seed": 37,
+      "primaryColor": "#be7171",
       "nodes": [
         { "id": "west", "position": [302, 600] },
         { "id": "shelf", "position": [372, 586] },

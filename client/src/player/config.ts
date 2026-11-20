@@ -71,6 +71,7 @@ export const playerConfig = {
     extensionSpeed: 900,
     retractSpeed: 1150,
     pullSpeed: 710,
+    reelSpeed: 720,
     minPullProgressSpeed: 0.1,
     barrelLength: 45,
     headLength: 11,

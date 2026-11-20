@@ -1,12 +1,7 @@
 import { vec2 } from "gl-matrix";
-import { castCapsule } from "../engine/collision";
-import { Drawable2D } from "../engine/drawable";
-import type { Entity } from "../engine/entity";
-import { tau } from "../engine/math";
-
-export const nodeRadius = 7;
-export const mainRadius = 1.35;
-export const minorRadius = 0.6;
+import type { ColonyTuning } from "./config";
+import type { FungalNode } from "./gem";
+import type { ColonyPalette } from "./palette";
 
 export type Junction = {
   position: vec2;
@@ -18,44 +13,6 @@ export type MainStrand = { kind: "main"; from: Junction; to?: Junction; trailId:
 export type MinorStrand = { kind: "minor"; parent: MainStrand | MinorStrand; root: vec2 };
 type Strand = MainStrand | MinorStrand;
 type Segment = { a: vec2; b: vec2; radius: number; strand: Strand; tick: number };
-
-export class FungalNode implements Entity {
-  readonly radius = nodeRadius;
-  readonly visual: Drawable2D;
-  constructor(
-    readonly id: string,
-    readonly junction: Junction,
-    parent: Drawable2D
-  ) {
-    this.visual = new Drawable2D((ctx, { time }) => {
-      // The outer silhouette is the collision circle. The pulse stays inside it.
-      ctx.fillStyle = "#f6ac89";
-      ctx.beginPath();
-      ctx.arc(0, 0, this.radius, 0, tau);
-      ctx.fill();
-      ctx.fillStyle = "#813f54";
-      ctx.beginPath();
-      ctx.arc(0, 0, this.radius - 1.4, 0, tau);
-      ctx.fill();
-      ctx.fillStyle = "#ffcf9b";
-      ctx.beginPath();
-      ctx.arc(
-        -0.8,
-        -0.5,
-        2.5 + 0.45 * Math.sin(time * 2.4 + junction.position[0] * 0.1),
-        0,
-        tau
-      );
-      ctx.fill();
-    }, parent);
-    vec2.copy(this.visual.position, junction.position);
-  }
-
-  cast(from: vec2, to: vec2, movingRadius = 0) {
-    const p = this.junction.position;
-    return castCapsule(from, to, movingRadius, p, p, this.radius);
-  }
-}
 
 const tileSize = 48;
 type Tile = {
@@ -76,6 +33,11 @@ export class FungalFabric {
     max: vec2.fromValues(-Infinity, -Infinity)
   };
   private readonly tiles = new Map<string, Tile>();
+
+  constructor(
+    private readonly palette: ColonyPalette,
+    private readonly tuning: Readonly<ColonyTuning>
+  ) {}
 
   enclose(p: vec2, r: number) {
     const { min, max } = this.bounds;
@@ -105,13 +67,15 @@ export class FungalFabric {
       tileKey(Math.floor(p[0] / tileSize), Math.floor(p[1] / tileSize))
     );
     // Local saturation retires a growing tip while the frontier can keep exploring.
-    return (tile?.[kind].length ?? 0) >= (kind === "main" ? 180 : 650);
+    const capacity =
+      kind === "main" ? this.tuning.mainSegmentsPerTile : this.tuning.minorSegmentsPerTile;
+    return (tile?.[kind].length ?? 0) >= capacity;
   }
 
   deposit(a: vec2, b: vec2, strand: Strand, tick: number) {
     if (vec2.exactEquals(a, b)) return;
     const main = strand.kind === "main";
-    const r = main ? mainRadius : minorRadius;
+    const r = main ? this.tuning.mainRadius : this.tuning.minorRadius;
     const segment: Segment = { a, b, strand, radius: r, tick };
     this.enclose(a, r);
     this.enclose(b, r);
@@ -128,7 +92,7 @@ export class FungalFabric {
         const tile = this.tile(x, y);
         tile[strand.kind].push(segment);
         const ctx = tile.ctx;
-        ctx.strokeStyle = main ? "#cf817c" : "#a6787d";
+        ctx.strokeStyle = main ? this.palette.primary : this.palette.minor;
         ctx.lineWidth = 2 * r;
         ctx.beginPath();
         ctx.moveTo(a[0], a[1]);

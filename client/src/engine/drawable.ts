@@ -32,6 +32,14 @@ export class Drawable2D extends Transform2D {
     parent?.children.push(this);
   }
 
+  /** Stop updating and drawing a child whose lifetime has ended. */
+  dispose() {
+    if (!this.parent) return;
+    const siblings = this.parent.children;
+    const index = siblings.indexOf(this);
+    if (index >= 0) siblings.splice(index, 1);
+  }
+
   /** Origin in parent coordinates for the frame being drawn. */
   get renderPosition(): ReadonlyVec2 {
     return this.sampledPosition;

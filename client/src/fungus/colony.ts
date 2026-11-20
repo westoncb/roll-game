@@ -3,18 +3,16 @@ import { castCapsule } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import type { Entity } from "../engine/entity";
 import { closestPointOnSegment, seededRandom, tau } from "../engine/math";
-import type { ColonyData } from "./config";
-import { GrowthDomain } from "./domain";
 import {
-  FungalFabric,
-  FungalNode,
-  mainRadius,
-  minorRadius,
-  nodeRadius,
-  type Junction,
-  type MainStrand,
-  type MinorStrand
-} from "./fabric";
+  defaultColonySeed,
+  resolveColonyTuning,
+  type ColonyData,
+  type ColonyTuning
+} from "./config";
+import { GrowthDomain } from "./domain";
+import { FungalNode } from "./gem";
+import { colonyPalette, type ColonyPalette } from "./palette";
+import { FungalFabric, type Junction, type MainStrand, type MinorStrand } from "./fabric";
 
 type Tip = {
   p: vec2;
@@ -42,10 +40,6 @@ type Filament = {
 };
 type Proposal = { tip: Tip; p: vec2; angle: number; bend: number };
 type Fusion = { a: Proposal; target: Proposal | Junction; gap: number };
-const growthStep = 2,
-  tickSeconds = 1 / 20,
-  mergeRadius = 4.5;
-const branchKnotSpacing = 108;
 
 function junction(position: vec2, arrivals = 0): Junction {
   return { position, arrivals, strands: [] };
@@ -63,10 +57,14 @@ function closeStrand(strand: MainStrand, to: Junction) {
 export class FungalColony implements Entity {
   readonly id: string;
   readonly nodes = new Map<string, FungalNode>();
-  readonly fabric = new FungalFabric();
+  readonly palette: ColonyPalette;
+  readonly tuning: Readonly<ColonyTuning>;
+  readonly fabric: FungalFabric;
+  private readonly detached = new Set<FungalNode>();
   readonly visual = new Drawable2D((ctx) => {
+    if (!this.nodes.size) ctx.globalAlpha *= 0.25;
     this.fabric.draw(ctx);
-    ctx.fillStyle = "#f9b99b";
+    ctx.fillStyle = this.palette.tip;
     ctx.beginPath();
     for (const tip of this.tips) {
       ctx.moveTo(tip.p[0] + 1.6, tip.p[1]);
@@ -82,28 +80,34 @@ export class FungalColony implements Entity {
   private time = 0;
   private tick = 0;
   private nextNode = 1;
+  private readonly authoredIds: Set<string>;
 
   constructor(
     data: ColonyData,
     private readonly domain: GrowthDomain
   ) {
     this.id = data.id;
-    this.random = seededRandom(data.seed ?? 37);
-    this.minorRandom = seededRandom((data.seed ?? 37) ^ 6035);
+    this.tuning = resolveColonyTuning(data.tuning, data.id);
+    this.authoredIds = new Set(data.nodes.map((node) => node.id));
+    this.palette = colonyPalette(data.primaryColor);
+    this.fabric = new FungalFabric(this.palette, this.tuning);
+    const seed = data.seed ?? defaultColonySeed;
+    this.random = seededRandom(seed);
+    this.minorRandom = seededRandom(seed ^ 6035);
     for (const n of data.nodes) {
       const p = vec2.fromValues(...n.position);
-      if (!domain.clear(p, p, nodeRadius))
+      if (!domain.clear(p, p, this.tuning.nodeRadius))
         throw new Error(
           `Colony "${data.id}" node "${n.id}" overlaps terrain or the level boundary.`
         );
-      const site = junction(p, 3);
+      const site = junction(p, this.tuning.fusionArrivals);
       this.sites.push(site);
-      this.addNode(n.id, site);
+      this.addNode(n.id, site, false);
     }
     for (const [from, to] of data.strands ?? []) {
       const a = this.nodes.get(from)!.junction,
         b = this.nodes.get(to)!.junction;
-      if (!domain.clear(a.position, b.position, mainRadius))
+      if (!domain.clear(a.position, b.position, this.tuning.mainRadius))
         throw new Error(`Colony "${data.id}" strand "${from}" to "${to}" crosses terrain.`);
       const strand = mainStrand(a),
         buds = this.newBuds();
@@ -132,18 +136,30 @@ export class FungalColony implements Entity {
     }
   }
 
-  private addNode(id: string, site: Junction) {
-    site.node = new FungalNode(id, site, this.visual);
+  private addNode(id: string, site: Junction, growing: boolean) {
+    site.node = new FungalNode(id, site, this, growing);
     this.nodes.set(id, site.node);
-    this.fabric.enclose(site.position, nodeRadius);
+    this.fabric.enclose(site.position, site.node.radius);
   }
 
   private mature(site: Junction) {
     let id: string;
     do {
       id = "knot-" + this.nextNode++;
-    } while (this.nodes.has(id));
-    this.addNode(id, site);
+    } while (this.authoredIds.has(id));
+    this.addNode(id, site, true);
+  }
+
+  detachNode(node: FungalNode) {
+    this.nodes.delete(node.id);
+    node.junction.node = undefined;
+    const index = this.sites.indexOf(node.junction);
+    if (index >= 0) this.sites.splice(index, 1);
+    this.detached.add(node);
+    if (!this.nodes.size) {
+      this.tips = [];
+      this.filaments = [];
+    }
   }
 
   private hasRoomForKnot(position: vec2, spacing: number) {
@@ -151,7 +167,17 @@ export class FungalColony implements Entity {
       if (vec2.squaredDistance(position, node.junction.position) < spacing ** 2)
         return false;
     }
-    return this.domain.clear(position, position, nodeRadius);
+    return this.domain.clear(position, position, this.tuning.nodeRadius);
+  }
+
+  private tryFusionKnot(site: Junction) {
+    const { fusionArrivals, fusionKnotSpacingRadii, nodeRadius } = this.tuning;
+    if (
+      !site.node &&
+      site.arrivals === fusionArrivals &&
+      this.hasRoomForKnot(site.position, fusionKnotSpacingRadii * nodeRadius)
+    )
+      this.mature(site);
   }
 
   /** Target query for a grapple cast. Stable node IDs are local to this colony. */
@@ -166,6 +192,7 @@ export class FungalColony implements Entity {
   }
 
   playerContact(from: vec2, to: vec2, radius: number) {
+    if (!this.nodes.size) return null;
     const { min, max } = this.fabric.bounds;
     if (
       Math.min(from[0], to[0]) - radius > max[0] ||
@@ -183,7 +210,10 @@ export class FungalColony implements Entity {
   }
 
   private gap() {
-    return 4 - 15 * Math.log(1 - this.minorRandom());
+    return (
+      this.tuning.minBudGroupGap -
+      this.tuning.meanExtraBudGroupGap * Math.log(1 - this.minorRandom())
+    );
   }
   private newBuds(): Buds {
     return { next: this.gap(), left: 0, side: 1, fan: 0, length: 0 };
@@ -228,7 +258,8 @@ export class FungalColony implements Entity {
         speed: 0.72 + 0.51 * rand(),
         length: 0,
         budget,
-        forkAt: rand() < 0.23 ? budget * (0.3 + 0.32 * rand()) : Infinity,
+        forkAt:
+          rand() < this.tuning.minorForkChance ? budget * (0.3 + 0.32 * rand()) : Infinity,
         born: this.tick + 2 + Math.floor(rand() * 8),
         strand: { kind: "minor", root, parent: strand }
       });
@@ -259,7 +290,7 @@ export class FungalColony implements Entity {
         x + f.speed * Math.cos(f.angle),
         y + f.speed * Math.sin(f.angle)
       );
-      if (!this.domain.clear(f.p, p, minorRadius)) continue;
+      if (!this.domain.clear(f.p, p, this.tuning.minorRadius)) continue;
       this.fabric.deposit(f.p, p, f.strand, this.tick);
       f.p = p;
       f.length += f.speed;
@@ -284,11 +315,13 @@ export class FungalColony implements Entity {
 
   private propose(tip: Tip): Proposal | null {
     if (this.fabric.crowded(tip.p, "main")) return null;
+    const { followRadius, attractionRadius, matureTipTicks, growthStep, mainRadius } =
+      this.tuning;
     let follow = 0,
       attract = 0,
-      nearest = 13;
+      nearest = followRadius;
     const sample = vec2.create();
-    for (const s of this.fabric.nearby(tip.p, tip.p, 13, false)) {
+    for (const s of this.fabric.nearby(tip.p, tip.p, followRadius, false)) {
       if (
         this.tick - s.tick < 7 ||
         (s.strand.kind === "main" && s.strand.trailId === tip.strand.trailId)
@@ -299,9 +332,9 @@ export class FungalColony implements Entity {
       if (d >= nearest || !this.domain.clear(tip.p, sample, 0)) continue;
       nearest = d;
       const tangent = Math.atan2(s.b[1] - s.a[1], s.b[0] - s.a[0]);
-      follow = 0.08 * (1 - d / 13) * Math.sin(2 * (tangent - tip.angle));
+      follow = 0.08 * (1 - d / followRadius) * Math.sin(2 * (tangent - tip.angle));
     }
-    nearest = 26;
+    nearest = attractionRadius;
     const sense = (p: vec2) => {
       const x = p[0] - tip.p[0],
         y = p[1] - tip.p[1],
@@ -313,10 +346,11 @@ export class FungalColony implements Entity {
       )
         return;
       nearest = d;
-      attract = 0.27 * (1 - d / 26) * Math.sin(Math.atan2(y, x) - tip.angle);
+      attract = 0.27 * (1 - d / attractionRadius) * Math.sin(Math.atan2(y, x) - tip.angle);
     };
-    if (tip.age >= 10) {
-      for (const other of this.tips) if (other !== tip && other.age >= 10) sense(other.p);
+    if (tip.age >= matureTipTicks) {
+      for (const other of this.tips)
+        if (other !== tip && other.age >= matureTipTicks) sense(other.p);
       for (const site of this.sites) if (site !== tip.origin) sense(site.position);
     }
     const bend = 0.91 * tip.bend + 0.032 * (2 * this.random() - 1);
@@ -342,11 +376,21 @@ export class FungalColony implements Entity {
 
   private grow() {
     this.tick++;
+    const {
+      matureTipTicks,
+      mergeRadius,
+      nodeRadius,
+      mainRadius,
+      growthStep,
+      meanSplitLength,
+      minSplitWeight,
+      branchKnotSpacing
+    } = this.tuning;
     const proposals = this.tips.map((t) => this.propose(t)).filter((p) => p !== null);
     const candidates: Fusion[] = [];
     for (let i = 0; i < proposals.length; i++) {
       const a = proposals[i];
-      if (a.tip.age + 1 < 10) continue;
+      if (a.tip.age + 1 < matureTipTicks) continue;
       for (const site of this.sites) {
         const gap = vec2.distance(a.p, site.position);
         if (site !== a.tip.origin && gap <= mergeRadius)
@@ -355,7 +399,7 @@ export class FungalColony implements Entity {
       for (let j = i + 1; j < proposals.length; j++) {
         const b = proposals[j],
           gap = vec2.distance(a.p, b.p);
-        if (b.tip.age + 1 >= 10 && gap <= mergeRadius)
+        if (b.tip.age + 1 >= matureTipTicks && gap <= mergeRadius)
           candidates.push({ a, target: b, gap });
       }
     }
@@ -375,6 +419,7 @@ export class FungalColony implements Entity {
           continue;
         const site = junction(p, 2);
         this.sites.push(site);
+        this.tryFusionKnot(site);
         this.finishAt(a, site);
         this.finishAt(target, site);
         used.add(target);
@@ -392,12 +437,8 @@ export class FungalColony implements Entity {
       } else {
         if (!this.domain.clear(a.tip.p, target.position, mainRadius)) continue;
         this.finishAt(a, target);
-        if (
-          ++target.arrivals === 3 &&
-          !target.node &&
-          this.hasRoomForKnot(target.position, 2 * nodeRadius)
-        )
-          this.mature(target);
+        target.arrivals++;
+        this.tryFusionKnot(target);
       }
       used.add(a);
     }
@@ -410,7 +451,9 @@ export class FungalColony implements Entity {
       t.bend = p.bend;
       t.age++;
       const splits =
-        t.age >= 10 && t.weight >= 0.5 && this.random() < -Math.expm1(-growthStep / 95);
+        t.age >= matureTipTicks &&
+        t.weight >= minSplitWeight &&
+        this.random() < -Math.expm1(-growthStep / meanSplitLength);
       const formsKnot =
         (splits || startedBudGroup) && this.hasRoomForKnot(t.p, branchKnotSpacing);
       if (!splits && !formsKnot) {
@@ -436,10 +479,22 @@ export class FungalColony implements Entity {
   }
 
   update(dt: number) {
+    if (!this.nodes.size) return;
+    for (const node of this.nodes.values()) node.growIn(dt);
     this.time += dt;
+    const { tickSeconds } = this.tuning;
     while (this.time + 1e-10 >= tickSeconds) {
       this.time -= tickSeconds;
       this.grow();
+    }
+  }
+
+  afterPhysics(dt: number) {
+    for (const node of this.detached) {
+      if (node.advanceReturn(dt)) {
+        node.visual.dispose();
+        this.detached.delete(node);
+      }
     }
   }
 }

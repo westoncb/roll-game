@@ -165,7 +165,7 @@ export class Player implements Entity {
   private readonly joints = this.ankles.map(
     (ankle) => new Drawable2D(drawAnkleJoint, ankle)
   );
-  private readonly gun = new PlayerGun(this.visual, this.stance);
+  private readonly gun = new PlayerGun(this.visual, this.stance, this.body);
   private readonly shell = new Drawable2D(shellShape, this.stance);
   private readonly screen = new PlayerScreen(this.shell, this.gun);
   private displayedCharge?: number;

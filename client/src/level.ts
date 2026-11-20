@@ -10,6 +10,7 @@ import { lerp } from "./engine/math";
 import { ParticleSystem } from "./engine/particles/system";
 import { stepPhysics } from "./engine/physics";
 import { Player } from "./player/player";
+import type { BeamHit } from "./player/gun";
 import { FungalColony } from "./fungus/colony";
 import type { ColonyData } from "./fungus/config";
 import { GrowthDomain } from "./fungus/domain";
@@ -66,13 +67,25 @@ export class Level {
         vec2.max(worldMax, worldMax, vertex);
       }
     }
+    const domain = new GrowthDomain(data.width, data.height, this.ground);
+    this.fungalColonies = (data.fungalColonies ?? []).map(
+      (config) => new FungalColony(config, domain)
+    );
     this.player = new Player(
       vec2.fromValues(...data.playerStart),
       this.ground,
       this.particles,
       (from, to) => {
-        const hit = castSegment(from, to, this.ground);
-        if (hit) return { kind: "clingable", ...hit };
+        const groundHit = castSegment(from, to, this.ground);
+        let first: (BeamHit & { fraction: number }) | null = groundHit
+          ? { kind: "clingable", ...groundHit }
+          : null;
+        for (const colony of this.fungalColonies) {
+          const gem = colony.castNode(from, to);
+          if (gem && (!first || gem.fraction < first.fraction))
+            first = { kind: "gem", ...gem };
+        }
+        if (first) return first;
         // A shot fired from outside can still travel back into the level.
         for (const axis of [0, 1]) {
           if (
@@ -83,10 +96,6 @@ export class Level {
         }
         return null;
       }
-    );
-    const domain = new GrowthDomain(data.width, data.height, this.ground);
-    this.fungalColonies = (data.fungalColonies ?? []).map(
-      (config) => new FungalColony(config, domain)
     );
     this.entities = [...this.fungalColonies, this.player];
     this.gravityField = new GravityField(

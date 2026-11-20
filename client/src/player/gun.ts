@@ -3,10 +3,13 @@ import type { TerrainHit } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import { playerConfig } from "./config";
 import { approach, tau } from "../engine/math";
+import type { PhysicsBody } from "../engine/physics";
+import type { FungalNode } from "../fungus/gem";
 
 // The level identifies the first target; only a clingable hit supplies a movement anchor.
 export type BeamHit =
   | ({ kind: "clingable" } & TerrainHit)
+  | { kind: "gem"; point: vec2; normal: vec2; fraction: number; node: FungalNode }
   | { kind: "damageable"; point: vec2 };
 export type CastBeam = (
   from: vec2,
@@ -20,6 +23,7 @@ type Shot =
   | { kind: "aiming"; rightTurn: 1 | -1; time: number }
   | { kind: "extending"; direction: vec2; castFrom: vec2 }
   | { kind: "pulling"; hit: TerrainHit; latchLength: number; lastDistance: number }
+  | { kind: "reeling"; node: FungalNode; grip: vec2; normal: vec2; latchLength: number }
   | { kind: "retracting"; remaining: number };
 
 export class PlayerGun {
@@ -31,7 +35,8 @@ export class PlayerGun {
 
   constructor(
     private readonly root: Drawable2D,
-    stance: Drawable2D
+    stance: Drawable2D,
+    private readonly receiver: PhysicsBody
   ) {
     this.tipNode = new Drawable2D((ctx) => this.drawGrapple(ctx), root);
     this.pivot = new Drawable2D(undefined, stance);
@@ -107,19 +112,32 @@ export class PlayerGun {
       const result = cast(shot.castFrom, end);
       if (result) {
         vec2.copy(this.tip, result.point);
-        if (result.kind === "clingable") {
+        if (result.kind === "clingable" || result.kind === "gem") {
           const socket = vec2.scaleAndAdd(
             vec2.create(),
             this.tip,
             result.normal,
             gun.headLength
           );
-          this.shot = {
-            kind: "pulling",
-            hit: result,
-            latchLength: vec2.distance(this.muzzle.localToWorld([0, 0]), socket),
-            lastDistance: vec2.distance(this.root.position, this.tip)
-          };
+          const latchLength = vec2.distance(this.muzzle.localToWorld([0, 0]), socket);
+          if (result.kind === "gem") {
+            const grip = result.node.visual.worldToLocal(result.point);
+            result.node.reelTo(this.receiver, gun.reelSpeed);
+            this.shot = {
+              kind: "reeling",
+              node: result.node,
+              grip,
+              normal: result.normal,
+              latchLength
+            };
+          } else {
+            this.shot = {
+              kind: "pulling",
+              hit: result,
+              latchLength,
+              lastDistance: vec2.distance(this.root.position, this.tip)
+            };
+          }
         } else this.shot = { kind: "retracting", remaining: vec2.distance(dock, this.tip) };
       } else {
         vec2.copy(this.tip, end);
@@ -130,6 +148,9 @@ export class PlayerGun {
       const distance = vec2.distance(this.root.position, this.tip);
       if (shot.lastDistance - distance < gun.minPullProgressSpeed * dt) this.finish();
       else shot.lastDistance = distance;
+    } else if (shot.kind === "reeling") {
+      shot.node.visual.localToWorld(shot.grip, this.tip);
+      if (!shot.node.reeling) this.finish();
     } else if (shot.kind === "retracting") {
       const distance = vec2.distance(this.tip, dock);
       shot.remaining = Math.max(
@@ -172,14 +193,18 @@ export class PlayerGun {
   private drawGrapple(ctx: CanvasRenderingContext2D) {
     if (this.shot.kind === "idle" || this.shot.kind === "aiming") return;
     // Seat the claws on contact even in the interpolated frame when the cast first hits.
-    const anchor = this.anchor;
+    const shot = this.shot;
+    if (shot.kind === "reeling" && !shot.node.reeling) return;
+    const normal = shot.kind === "reeling" ? shot.normal : this.anchor?.normal;
     const tipPose = this.tipNode.renderWorldMatrix;
-    const tipX = anchor?.point[0] ?? tipPose[4];
-    const tipY = anchor?.point[1] ?? tipPose[5];
+    const contact =
+      shot.kind === "reeling"
+        ? vec2.transformMat2d(vec2.create(), shot.grip, shot.node.visual.renderWorldMatrix)
+        : this.anchor?.point;
+    const tipX = contact?.[0] ?? tipPose[4];
+    const tipY = contact?.[1] ?? tipPose[5];
     ctx.translate(tipX - tipPose[4], tipY - tipPose[5]);
-    const angle = anchor
-      ? Math.atan2(-anchor.normal[1], -anchor.normal[0])
-      : this.renderAngle;
+    const angle = normal ? Math.atan2(-normal[1], -normal[0]) : this.renderAngle;
     const dx = this.muzzle.renderWorldMatrix[4] - tipX;
     const dy = this.muzzle.renderWorldMatrix[5] - tipY;
     const cableX = -gun.headLength * Math.cos(angle) - dx;
@@ -190,7 +215,7 @@ export class PlayerGun {
     this.drawBeam(ctx, Math.hypot(cableX, cableY));
     ctx.restore();
     ctx.rotate(angle);
-    drawGrappleHead(ctx, anchor !== null);
+    drawGrappleHead(ctx, normal !== undefined);
   }
 
   private drawBeam(ctx: CanvasRenderingContext2D, length: number) {
@@ -200,7 +225,7 @@ export class PlayerGun {
     // Keep the last partial sleeve at the anchor. The first sleeve disappears into the muzzle.
     const pitch = gun.segmentLength;
     const clipped =
-      this.shot.kind === "pulling"
+      this.shot.kind === "pulling" || this.shot.kind === "reeling"
         ? (((this.shot.latchLength - length) % pitch) + pitch) % pitch
         : 0;
     const sleeves = new Path2D();
