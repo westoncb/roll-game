@@ -6,7 +6,7 @@ import { GroundPolygon } from "./ground";
 import type { InputState } from "./input";
 import { ParticleSystem } from "./particles/system";
 import { stepPhysics } from "./physics";
-import { Player } from "./player";
+import { Player } from "./player/player";
 
 export type Point = [number, number];
 export type GroundData = { vertices: Point[]; gravityScale?: number };

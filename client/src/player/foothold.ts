@@ -1,6 +1,6 @@
 import { vec2 } from "gl-matrix";
-import { edgeIntersectsConvexPolygon, segmentCrossesEdge } from "./collision";
-import type { GroundEdge } from "./ground";
+import { edgeIntersectsConvexPolygon, segmentCrossesEdge } from "../collision";
+import type { GroundEdge } from "../ground";
 import {
   halfSole,
   maxLegAngle,
@@ -8,8 +8,8 @@ import {
   minLegReach,
   playerConfig,
   rollRadius
-} from "./player-config";
-import { angleDifference, largestFit } from "./util";
+} from "./config";
+import { angleDifference, largestFit } from "../util";
 
 const { foot } = playerConfig;
 

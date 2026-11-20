@@ -1,8 +1,8 @@
 import { vec2, type ReadonlyVec2 } from "gl-matrix";
-import type { TerrainHit } from "./collision";
-import { Drawable2D } from "./drawable";
-import { playerConfig } from "./player-config";
-import { approach, tau } from "./util";
+import type { TerrainHit } from "../collision";
+import { Drawable2D } from "../drawable";
+import { playerConfig } from "./config";
+import { approach, tau } from "../util";
 
 // The level identifies the first target; only a clingable hit supplies a movement anchor.
 export type BeamHit =

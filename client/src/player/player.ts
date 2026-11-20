@@ -1,8 +1,8 @@
 import { vec2 } from "gl-matrix";
-import { gameAssets } from "./assets";
-import { nearbyEdges } from "./collision";
-import { Drawable2D } from "./drawable";
-import type { Entity } from "./entity";
+import { gameAssets } from "../assets";
+import { nearbyEdges } from "../collision";
+import { Drawable2D } from "../drawable";
+import type { Entity } from "../entity";
 import {
   fitCrouchGrips,
   planFootholds,
@@ -14,18 +14,18 @@ import {
   type LegStance,
   type Pose
 } from "./foothold";
-import type { GroundEdge, GroundPolygon } from "./ground";
-import type { InputState } from "./input";
-import { PlayerScreen } from "./player-screen";
-import { PlayerGun, type CastBeam } from "./player-gun";
-import type { EffectPlayer } from "./particles/system";
+import type { GroundEdge, GroundPolygon } from "../ground";
+import type { InputState } from "../input";
+import { PlayerScreen } from "./screen";
+import { PlayerGun, type CastBeam } from "./gun";
+import type { EffectPlayer } from "../particles/system";
 import {
   collectContacts,
   gravityAt,
   moveAtVelocity,
   stepPhysics,
   PhysicsBody
-} from "./physics";
+} from "../physics";
 import {
   halfSole,
   legSpacing,
@@ -34,7 +34,7 @@ import {
   restLegLength,
   rollRadius,
   shellRadius
-} from "./player-config";
+} from "./config";
 import {
   advanceAlongSurface,
   steerAlongSurface,
@@ -44,7 +44,7 @@ import {
   surfacePose,
   type Support
 } from "./walking";
-import { angleDifference, approach, approachAngle, largestFit, lerp, tau } from "./util";
+import { angleDifference, approach, approachAngle, largestFit, lerp, tau } from "../util";
 
 const { leg: legConfig, foot, shell, movement, jump, colors } = playerConfig;
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.

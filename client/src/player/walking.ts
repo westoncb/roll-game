@@ -1,8 +1,8 @@
 import { vec2 } from "gl-matrix";
-import { nearbyEdges, nearestBoundary, type GroundContact } from "./collision";
-import type { GroundEdge, GroundPolygon } from "./ground";
-import { playerConfig } from "./player-config";
-import { angleDifference, closestPointOnSegment } from "./util";
+import { nearbyEdges, nearestBoundary, type GroundContact } from "../collision";
+import type { GroundEdge, GroundPolygon } from "../ground";
+import { playerConfig } from "./config";
+import { angleDifference, closestPointOnSegment } from "../util";
 
 // An edge offset is measured along its tangent. A corner offset is measured
 // along the circular arc at edge.a, starting from the preceding face.
