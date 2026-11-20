@@ -34,9 +34,23 @@ export function colonyPalette(primary = defaultPrimaryColor) {
   const tint = (color: string, other: string, amount: number) =>
     `color-mix(in srgb, ${color}, ${other} ${amount}%)`;
   const mid = tint(gem, "black", 22);
+  const minor = tint(primary, "#38394e", 32);
+  const ash = "#505053";
+  const healthRamp = (healthy: string) =>
+    Array.from({ length: 17 }, (_, i) =>
+      i === 16
+        ? healthy
+        : i < 4
+          ? tint(ash, "#312432", 25 * i)
+          : tint("#312432", healthy, ((i - 4) / 12) * 100)
+    );
   return {
     primary,
-    minor: tint(primary, "#38394e", 32),
+    ash,
+    tissue: { main: healthRamp(primary), minor: healthRamp(minor) },
+    supply: Array.from({ length: 17 }, (_, i) =>
+      tint("#4c285e", "#ffe18a", (100 * i) / 16)
+    ),
     tip: tint(primary, "white", 42),
     wound: tint(gem, "white", 72),
     gem,

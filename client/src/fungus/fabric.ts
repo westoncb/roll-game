@@ -1,45 +1,22 @@
 import { vec2 } from "gl-matrix";
 import type { ColonyTuning } from "./config";
-import type { FungalNode } from "./gem";
+import { FiberNetwork, type FiberSegment, type Strand } from "./network";
 import type { ColonyPalette } from "./palette";
 
-export type Junction = {
-  position: vec2;
-  strands: MainStrand[];
-  arrivals: number;
-  node?: FungalNode;
-};
-export type MainStrand = { kind: "main"; from: Junction; to?: Junction; trailId: symbol };
-export type MinorStrand = { kind: "minor"; parent: MainStrand | MinorStrand; root: vec2 };
-type Strand = MainStrand | MinorStrand;
-export type FiberSegment = {
-  a: vec2;
-  b: vec2;
-  radius: number;
-  strand: Strand;
-  tick: number;
-  buds?: vec2[]; // Minor strands attach at these points inside a main segment.
-  dead?: boolean;
-};
-
-type Reaction = {
-  started: number;
-  strength: number;
-  lethal: boolean;
-  opacity: number;
-  flash: number;
-};
-
 const tileSize = 48;
-const maxWoundSegmentLength = 8;
+const maxSegmentLength = 8;
 type Tile = {
   x: number;
   y: number;
   ctx: CanvasRenderingContext2D;
   segments: Set<FiberSegment>;
   main: Set<FiberSegment>;
+  ash: Set<FiberSegment>;
+  mainDensity: number;
+  minorDensity: number;
   dirty: boolean;
 };
+
 function tileKey(x: number, y: number) {
   return x + "," + y;
 }
@@ -58,19 +35,47 @@ function stroke(
   ctx.stroke();
 }
 
-// Healthy tissue stays cached. Only tiles touched by a reaction need repainting.
+// Integral of unit wound pressure. Each pulse holds, then releases linearly.
+// Integrating between tissue ticks keeps the dose independent of frame/tick frequency.
+function woundDose(age: number, tuning: Readonly<ColonyTuning>) {
+  const t = Math.max(0, age - tuning.woundFlashSeconds);
+  const hold = tuning.woundWitherSeconds,
+    release = tuning.woundRecoverSeconds;
+  const tail = Math.min(release, Math.max(0, t - hold));
+  return t >= hold + release
+    ? 1
+    : (Math.min(t, hold) + tail * (1 - tail / (2 * release))) / (hold + release / 2);
+}
+
+function woundDamage(strength: number, tuning: Readonly<ColonyTuning>) {
+  // Even a saturated wound takes the configured wither time to consume healthy tissue.
+  return Math.min(
+    strength / tuning.woundKillStrength,
+    1 + tuning.woundRecoverSeconds / (2 * tuning.woundWitherSeconds)
+  );
+}
+
 export class FungalFabric {
+  readonly network: FiberNetwork;
   readonly bounds = {
     min: vec2.fromValues(Infinity, Infinity),
     max: vec2.fromValues(-Infinity, -Infinity)
   };
   private readonly tiles = new Map<string, Tile>();
-  private readonly reacting = new Map<FiberSegment, Reaction>();
+  private readonly wounded = new Set<FiberSegment>();
+  private readonly ash = new Map<FiberSegment, number>();
+  private time = 0;
 
   constructor(
     private readonly palette: ColonyPalette,
-    private readonly tuning: Readonly<ColonyTuning>
-  ) {}
+    private readonly tuning: Readonly<ColonyTuning>,
+    private readonly releaseAsh?: (position: vec2, amount: number) => void
+  ) {
+    this.network = new FiberNetwork(tuning, {
+      added: (s) => this.index(s),
+      removed: (s) => this.becomeAsh(s)
+    });
+  }
 
   enclose(p: vec2, r: number) {
     const { min, max } = this.bounds;
@@ -89,7 +94,17 @@ export class FungalFabric {
       const ctx = canvas.getContext("2d")!;
       ctx.setTransform(2, 0, 0, 2, -2 * x * tileSize, -2 * y * tileSize);
       ctx.lineCap = "round";
-      tile = { x, y, ctx, segments: new Set(), main: new Set(), dirty: false };
+      tile = {
+        x,
+        y,
+        ctx,
+        segments: new Set(),
+        main: new Set(),
+        ash: new Set(),
+        mainDensity: 0,
+        minorDensity: 0,
+        dirty: false
+      };
       this.tiles.set(key, tile);
     }
     return tile;
@@ -99,131 +114,170 @@ export class FungalFabric {
     const tile = this.tiles.get(
       tileKey(Math.floor(p[0] / tileSize), Math.floor(p[1] / tileSize))
     );
-    // Local saturation retires a growing tip while the frontier can keep exploring.
-    const capacity =
-      kind === "main" ? this.tuning.mainSegmentsPerTile : this.tuning.minorSegmentsPerTile;
-    const mainCount = tile?.main.size ?? 0;
-    return (
-      (kind === "main" ? mainCount : (tile?.segments.size ?? 0) - mainCount) >= capacity
-    );
+    return kind === "main"
+      ? (tile?.mainDensity ?? 0) >= this.tuning.mainSegmentsPerTile
+      : (tile?.minorDensity ?? 0) >= this.tuning.minorSegmentsPerTile;
   }
 
-  private *segmentTiles({ a, b, radius: r }: FiberSegment) {
+  private *segmentTiles(s: FiberSegment) {
+    // Index the widest possible healthy silhouette. Growth checks this same clearance.
+    const { a, b, maxRadius: r } = s;
     for (
       let y = Math.floor((Math.min(a[1], b[1]) - r) / tileSize);
       y <= Math.floor((Math.max(a[1], b[1]) + r) / tileSize);
       y++
-    ) {
+    )
       for (
         let x = Math.floor((Math.min(a[0], b[0]) - r) / tileSize);
         x <= Math.floor((Math.max(a[0], b[0]) + r) / tileSize);
         x++
-      ) {
+      )
         yield this.tile(x, y);
-      }
-    }
   }
 
   private color(s: FiberSegment) {
-    return s.strand.kind === "main" ? this.palette.primary : this.palette.minor;
-  }
-
-  deposit(a: vec2, b: vec2, strand: Strand, tick: number, buds?: vec2[]) {
-    if (vec2.exactEquals(a, b)) return;
-    const radius =
-      strand.kind === "main" ? this.tuning.mainRadius : this.tuning.minorRadius;
-    this.enclose(a, radius);
-    this.enclose(b, radius);
-    this.index({ a, b, strand, radius, tick, buds });
+    if (this.tuning.showNutrientSupply) return this.palette.supply[s.supplyBand];
+    return this.palette.tissue[s.strand.kind][s.healthBand];
   }
 
   private index(s: FiberSegment) {
+    this.enclose(s.a, s.maxRadius);
+    this.enclose(s.b, s.maxRadius);
     for (const tile of this.segmentTiles(s)) {
       tile.segments.add(s);
-      if (s.strand.kind === "main") tile.main.add(s);
-      if (!tile.dirty) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
+      if (s.strand.kind === "main") {
+        tile.main.add(s);
+        tile.mainDensity += s.densityWeight;
+      } else tile.minorDensity += s.densityWeight;
+      if (!tile.dirty && s.length) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
     }
   }
 
-  // Only subdivide unusually long deposits (e.g. a large configured growth step)
-  // when the wave actually reaches them, so the undisturbed colony grows as authored.
-  private subdivide(s: FiberSegment, length: number) {
-    const { a, b, buds } = s;
-    const count = Math.ceil(length / maxWoundSegmentLength);
-    this.remove(s, true);
-    let start = a,
-      budIndex = 0;
-    for (let i = 1; i <= count; i++) {
-      const end = i === count ? b : vec2.lerp(vec2.create(), a, b, i / count);
-      const piece: FiberSegment = {
-        a: start,
-        b: end,
-        strand: s.strand,
-        radius: s.radius,
-        tick: s.tick
-      };
-      if (buds) {
-        const first = budIndex;
-        while (
-          budIndex < buds.length &&
-          (i === count || vec2.distance(a, buds[budIndex]) <= (length * i) / count)
-        )
-          budIndex++;
-        if (budIndex > first) piece.buds = buds.slice(first, budIndex);
+  deposit(a: vec2, b: vec2, strand: Strand, tick: number, buds?: vec2[]) {
+    if (a === b) return;
+    const length = vec2.distance(a, b);
+    // The ordered samples on this deposit are its actual graph edges. Bud roots are
+    // shared endpoints, and long steps retain a finite spatial resolution for decay.
+    let start = a;
+    for (const stop of buds ? [...buds, b] : [b]) {
+      const from = start;
+      const pieces = Math.max(1, Math.ceil(vec2.distance(from, stop) / maxSegmentLength));
+      for (let i = 1; i <= pieces; i++) {
+        const end = i === pieces ? stop : vec2.lerp(vec2.create(), from, stop, i / pieces);
+        if (start !== end) {
+          const weight = length ? vec2.distance(start, end) / length : 0;
+          this.network.connect(start, end, strand, tick, weight);
+        }
+        start = end;
       }
-      this.index(piece);
-      start = end;
     }
   }
 
-  private remove(s: FiberSegment, invalidateCache: boolean) {
-    s.dead = true;
+  expose(s: FiberSegment, start: number, strength: number) {
+    if (s.dead) return;
+    // Combine overlapping wounds, bounded by the strength at an extraction site.
+    const old = s.wound;
+    let pendingDose = 0;
+    if (old) {
+      start = Math.max(old.start, start);
+      const spent = woundDose(start - old.start, this.tuning);
+      pendingDose =
+        old.pendingDose +
+        (spent - woundDose(this.time - old.start, this.tuning)) *
+          woundDamage(old.strength, this.tuning);
+      strength = Math.min(1, strength + old.strength * (1 - spent));
+    }
+    s.wound = { start, strength, pendingDose };
+    this.wounded.add(s);
+  }
+
+  private becomeAsh(s: FiberSegment) {
+    this.wounded.delete(s);
+    this.ash.set(s, this.time + this.tuning.ashHoldSeconds);
     for (const tile of this.segmentTiles(s)) {
       tile.segments.delete(s);
-      tile.main.delete(s);
-      if (invalidateCache) tile.dirty = true;
+      if (s.strand.kind === "main") {
+        tile.main.delete(s);
+        tile.mainDensity = Math.max(0, tile.mainDensity - s.densityWeight);
+      } else tile.minorDensity = Math.max(0, tile.minorDensity - s.densityWeight);
+      tile.ash.add(s);
+      tile.dirty = true;
     }
   }
 
-  *connected(point: vec2) {
-    const tile = this.tiles.get(
-      tileKey(Math.floor(point[0] / tileSize), Math.floor(point[1] / tileSize))
-    );
-    if (!tile) return;
-    for (const s of tile.segments) {
-      if (s.a !== point && s.b !== point && !s.buds?.includes(point)) continue;
-      // Set iteration also visits the newly indexed pieces.
-      const length = vec2.distance(s.a, s.b);
-      if (length > maxWoundSegmentLength) this.subdivide(s, length);
-      else yield s;
-    }
-  }
-
-  expose(s: FiberSegment, started: number, strength: number) {
-    const lethal = strength >= this.tuning.woundKillStrength;
-    const previous = this.reacting.get(s);
-    if (s.dead || previous?.lethal || (previous && !lethal && previous.started > started))
-      return;
-    if (!previous) for (const tile of this.segmentTiles(s)) tile.dirty = true;
-    this.reacting.set(s, { started, strength, lethal, flash: strength, opacity: 1 });
-  }
-
-  updateReactions(time: number) {
-    const { woundFlashSeconds, woundWitherSeconds, woundRecoverSeconds } = this.tuning;
-    for (const [s, r] of this.reacting) {
-      const age = Math.max(0, time - r.started);
-      r.flash = r.strength * Math.max(0, 1 - age / woundFlashSeconds);
-      const duration = r.lethal ? woundWitherSeconds : woundRecoverSeconds;
-      const t = Math.max(0, (age - woundFlashSeconds) / duration);
-      if (t < 1) {
-        r.opacity = r.lethal ? 1 - t : 1 - 0.7 * (1 - t);
+  updateTissue(time: number) {
+    if (time <= this.time) return;
+    this.network.solve();
+    const dt = time - this.time;
+    this.time = time;
+    const t = this.tuning;
+    const widthBlend = -Math.expm1(-dt / t.widthResponseSeconds);
+    let severed = false;
+    for (const s of this.network.segments) {
+      const supply = s.supply;
+      let change = (dt * (supply / t.maintenanceSupply - 1)) / t.starvationSeconds;
+      if (s.wound) {
+        const age = time - s.wound.start;
+        const dose = woundDose(age, t);
+        change -=
+          s.wound.pendingDose +
+          (dose - woundDose(age - dt, t)) * woundDamage(s.wound.strength, t);
+        s.wound.pendingDose = 0;
+        if (dose >= 1) {
+          s.wound = undefined;
+          this.wounded.delete(s);
+        }
+      }
+      s.health = Math.max(0, Math.min(1, s.health + change));
+      if (s.health === 0) {
+        this.network.sever(s);
+        severed = true;
         continue;
       }
-      this.reacting.delete(s);
-      if (r.lethal)
-        this.remove(s, false); // Already omitted from the static tile.
-      else for (const tile of this.segmentTiles(s)) tile.dirty = true;
+      const width = t.minWidthFraction + (1 - t.minWidthFraction) * supply;
+      s.widthFraction += widthBlend * (width - s.widthFraction);
+      const radius =
+        s.maxRadius * Math.max(t.minWidthFraction, Math.round(s.widthFraction * 32) / 32);
+      const healthBand = Math.round(s.health * 16),
+        supplyBand = Math.round(supply * 16);
+      if (
+        radius !== s.radius ||
+        healthBand !== s.healthBand ||
+        (t.showNutrientSupply && supplyBand !== s.supplyBand)
+      )
+        for (const tile of this.segmentTiles(s)) tile.dirty = true;
+      s.radius = radius;
+      s.healthBand = healthBand;
+      s.supplyBand = supplyBand;
     }
+    if (severed) this.network.solve();
+    this.crumble(time);
+  }
+
+  private crumble(time: number) {
+    if (!this.ash.size) return;
+    // Batch simultaneous shedding locally, while keeping the flakes on real fiber positions.
+    const spacing = this.tuning.ashBurstSpacing;
+    const bursts = new Map<string, { position: vec2; amount: number }>();
+    for (const [s, expiry] of this.ash) {
+      if (time < expiry) continue;
+      this.ash.delete(s);
+      for (const tile of this.segmentTiles(s)) {
+        tile.ash.delete(s);
+        tile.dirty = true;
+        if (!tile.ash.size && !tile.segments.size)
+          this.tiles.delete(tileKey(tile.x, tile.y));
+      }
+      if (!this.releaseAsh || !s.length) continue;
+      const x = (s.a[0] + s.b[0]) / 2,
+        y = (s.a[1] + s.b[1]) / 2;
+      const key = tileKey(Math.floor(x / spacing), Math.floor(y / spacing));
+      const burst = bursts.get(key);
+      if (burst) burst.amount += s.length;
+      else bursts.set(key, { position: vec2.fromValues(x, y), amount: s.length });
+    }
+    for (const { position, amount } of bursts.values())
+      this.releaseAsh?.(position, Math.min(1, amount / spacing));
   }
 
   nearby(a: vec2, b: vec2, r: number, includeMinor: boolean) {
@@ -232,38 +286,40 @@ export class FungalFabric {
     const y0 = Math.max(Math.min(a[1], b[1]) - r, this.bounds.min[1]),
       y1 = Math.min(Math.max(a[1], b[1]) + r, this.bounds.max[1]);
     const result = new Set<FiberSegment>();
-    if (x0 > x1 || y0 > y1) return result;
-    for (let y = Math.floor(y0 / tileSize); y <= Math.floor(y1 / tileSize); y++) {
+    for (let y = Math.floor(y0 / tileSize); y <= Math.floor(y1 / tileSize); y++)
       for (let x = Math.floor(x0 / tileSize); x <= Math.floor(x1 / tileSize); x++) {
         const tile = this.tiles.get(tileKey(x, y));
-        if (!tile) continue;
-        for (const s of includeMinor ? tile.segments : tile.main) result.add(s);
+        if (tile)
+          for (const s of includeMinor ? tile.segments : tile.main)
+            if (s.length) result.add(s);
       }
-    }
     return result;
   }
 
-  draw(ctx: CanvasRenderingContext2D, brightness = 1) {
-    const alpha = ctx.globalAlpha;
-    ctx.globalAlpha = alpha * brightness;
+  draw(ctx: CanvasRenderingContext2D, time: number) {
     for (const tile of this.tiles.values()) {
       const x = tile.x * tileSize,
         y = tile.y * tileSize;
       if (tile.dirty) {
         tile.ctx.clearRect(x, y, tileSize, tileSize);
         for (const s of tile.segments)
-          if (!this.reacting.has(s)) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
+          if (s.length) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
+        for (const s of tile.ash)
+          if (s.length) stroke(tile.ctx, s, this.palette.ash, 2 * s.radius);
         tile.dirty = false;
       }
       ctx.drawImage(tile.ctx.canvas, x, y, tileSize, tileSize);
     }
+    const alpha = ctx.globalAlpha;
     ctx.lineCap = "round";
-    for (const [s, r] of this.reacting) {
-      ctx.globalAlpha = alpha * brightness * r.opacity;
-      stroke(ctx, s, this.color(s), 2 * s.radius);
-      if (r.flash > 0) {
-        ctx.globalAlpha = alpha * r.flash;
-        stroke(ctx, s, this.palette.wound, 2 * s.radius + 2 * r.flash);
+    for (const s of this.wounded) {
+      const wound = s.wound!;
+      const flash =
+        wound.strength *
+        Math.max(0, 1 - (time - wound.start) / this.tuning.woundFlashSeconds);
+      if (flash > 0 && s.length) {
+        ctx.globalAlpha = alpha * flash;
+        stroke(ctx, s, this.palette.wound, 2 * s.radius + 2 * flash);
       }
     }
     ctx.globalAlpha = alpha;

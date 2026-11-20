@@ -23,14 +23,28 @@ export const defaultColonyTuning = {
   gemGrowSeconds: 0.38,
   gemCollectSeconds: 0.22,
 
+  // Nutrient supply is 0..1. Length and uptake are measured along actual fibers.
+  nutrientStepSeconds: 0.15, // Batch transport and tissue updates independently of tip ticks.
+  nutrientLength: 160, // Characteristic supply distance along an unbranched main strand.
+  gemOutput: 1200, // Source capacity in equivalent world units of main-fiber demand.
+  minorConductance: 0.08, // Relative to main fibers of the same length.
+  minorUptake: 0.08,
+  maintenanceSupply: 0.22, // Below this supply, tissue loses health and tips pause.
+  starvationSeconds: 5, // Time for fully healthy, completely unfed tissue to die.
+  minWidthFraction: 0.45, // mainRadius/minorRadius are the fully fed radii.
+  widthResponseSeconds: 0.6,
+  ashHoldSeconds: 0.3, // Nonconducting, harmless gray fiber before flakes fall.
+  ashBurstSpacing: 16, // Group nearby crumbling fibers into one dust burst per area this wide.
+  showNutrientSupply: false, // Color live tissue from depleted purple to well-fed gold.
+
   // Extraction sends a pulse along fibers. Strength at path distance d is exp(-d / decayLength).
   woundSpeed: 90, // World units of fiber traveled per second.
   woundDecayLength: 52,
   woundMinStrength: 0.14, // Stop propagation below this strength.
-  woundKillStrength: 0.01, // Weaker hits dim and recover.
+  woundKillStrength: 0.01, // Reference pulse dose that costs one full health at maintenance supply.
   woundFlashSeconds: 0.2,
-  woundWitherSeconds: 0.32,
-  woundRecoverSeconds: 0.65,
+  woundWitherSeconds: 0.32, // Full pressure after the flash.
+  woundRecoverSeconds: 0.65, // Time for the pressure to taper to zero.
 
   mainRadius: 1.35,
   minorRadius: 0.6,
@@ -77,7 +91,12 @@ function validTuning(key: keyof ColonyTuning, value: number) {
       return value >= 0 && value <= 1;
     case "woundMinStrength":
     case "woundKillStrength":
+    case "minWidthFraction":
       return value > 0 && value <= 1;
+    case "maintenanceSupply":
+      return value > 0 && value < 1;
+    case "nutrientStepSeconds":
+      return value >= 0.001;
     case "branchKnotSpacing":
     case "fusionKnotSpacingRadii":
     case "mergeRadius":
@@ -86,6 +105,7 @@ function validTuning(key: keyof ColonyTuning, value: number) {
     case "minSplitWeight":
     case "gemGrowSeconds":
     case "gemCollectSeconds":
+    case "ashHoldSeconds":
     case "meanExtraBudGroupGap":
       return value >= 0;
     default:
@@ -100,7 +120,12 @@ export function resolveColonyTuning(value: unknown, colonyId: string): ColonyTun
   for (const [key, v] of Object.entries(tuning)) {
     if (!Object.hasOwn(defaultColonyTuning, key))
       throw new Error(`Unknown tuning.${key} in fungal colony "${colonyId}".`);
-    if (typeof v !== "number" || !validTuning(key as keyof ColonyTuning, v))
+    if (key === "showNutrientSupply" && typeof v === "boolean") continue;
+    if (
+      key === "showNutrientSupply" ||
+      typeof v !== "number" ||
+      !validTuning(key as keyof ColonyTuning, v)
+    )
       throw new Error(`Invalid tuning.${key} in fungal colony "${colonyId}".`);
   }
   return tuning;

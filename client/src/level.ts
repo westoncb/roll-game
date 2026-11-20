@@ -69,7 +69,14 @@ export class Level {
     }
     const domain = new GrowthDomain(data.width, data.height, this.ground);
     this.fungalColonies = (data.fungalColonies ?? []).map(
-      (config) => new FungalColony(config, domain)
+      (config) =>
+        new FungalColony(config, domain, (position, strength) => {
+          this.particles.play(
+            gameAssets.particles.get("fungal-ash"),
+            { kind: "world", position },
+            { strength }
+          );
+        })
     );
     this.player = new Player(
       vec2.fromValues(...data.playerStart),

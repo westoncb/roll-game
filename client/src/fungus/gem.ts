@@ -5,8 +5,7 @@ import type { Entity } from "../engine/entity";
 import { GroundPolygon } from "../engine/ground";
 import { tau } from "../engine/math";
 import type { PhysicsBody } from "../engine/physics";
-import type { FungalColony } from "./colony";
-import type { Junction } from "./fabric";
+import type { FungalColony, Junction } from "./colony";
 import type { ColonyPalette } from "./palette";
 
 // Unit geometry is shared; each colony scales both the drawing and casts by its radius.
