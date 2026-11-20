@@ -26,7 +26,8 @@
     },
     {
       "routine": "fungalStrands",
-      "height": 36,
+      "width": [32, 84],
+      "height": [16, 48],
       "spacing": 430,
       "pixelSize": 2,
       "shadow": "#483c54",

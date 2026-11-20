@@ -16,11 +16,31 @@ export function color(settings: RoutineSettings, field: string, source: string) 
   return value;
 }
 
+function isPositive(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 export function positive(settings: RoutineSettings, field: string, source: string) {
   const value = settings[field];
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+  if (!isPositive(value))
     throw new Error(`${source}.${field} must be positive and finite.`);
   return value;
+}
+
+export function positiveRange(
+  settings: RoutineSettings,
+  field: string,
+  source: string
+): readonly [min: number, max: number] {
+  const value = settings[field];
+  if (isPositive(value)) return [value, value];
+  if (Array.isArray(value) && value.length === 2) {
+    const [min, max] = value;
+    if (isPositive(min) && isPositive(max) && min <= max) return [min, max];
+  }
+  throw new Error(
+    `${source}.${field} must be a positive finite number or an ordered [min, max] pair of positive finite numbers.`
+  );
 }
 
 /** Local random stream so repainting artwork never advances gameplay randomness. */
