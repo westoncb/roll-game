@@ -1,6 +1,11 @@
-import { readParticleEffect } from "./particle-effect";
-import { readShapeStyle } from "./shape-style";
+import { fill, stroke } from "../engine/draw-routines";
+import { readShapeStyle } from "../engine/shape-style";
 import { AssetCatalog } from "./catalog";
+import { sciFiDirt } from "./draw-routines/sci-fi-dirt";
+import { sketchBorder } from "./draw-routines/sketch-border";
+import { readParticleEffect } from "./particle-effect";
+
+const gameRoutines = { fill, stroke, sciFiDirt, sketchBorder };
 
 const particleFiles = import.meta.glob<unknown>("../../../assets/particles/*.json", {
   eager: true,
@@ -28,5 +33,7 @@ function catalog<T>(
 
 export const gameAssets = {
   particles: catalog("particle", particleFiles, readParticleEffect),
-  shapeStyles: catalog("shape style", styleFiles, readShapeStyle)
+  shapeStyles: catalog("shape style", styleFiles, (data, source) =>
+    readShapeStyle(data, source, gameRoutines)
+  )
 };

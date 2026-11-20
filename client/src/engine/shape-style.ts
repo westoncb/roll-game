@@ -1,21 +1,7 @@
-import { ShapeStyle } from "../engine/shape";
-import {
-  fill,
-  stroke,
-  type DrawRoutine,
-  type RoutineSettings
-} from "../engine/draw-routines";
-import { sciFiDirt } from "./draw-routines/sci-fi-dirt";
-import { sketchBorder } from "./draw-routines/sketch-border";
+import type { DrawRoutine, RoutineSettings } from "./draw-routines";
+import { ShapeStyle } from "./shape";
 
-const gameRoutines: Readonly<
-  Record<string, (settings: RoutineSettings, source: string) => DrawRoutine>
-> = {
-  fill,
-  stroke,
-  sciFiDirt,
-  sketchBorder
-};
+type RoutineReader = (settings: RoutineSettings, source: string) => DrawRoutine;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -24,7 +10,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export function readShapeStyle(
   data: unknown,
   source: string,
-  readers = gameRoutines
+  readers: Readonly<Record<string, RoutineReader>>
 ): ShapeStyle {
   if (!isObject(data) || (data.version !== 1 && data.version !== 2 && data.version !== 3))
     throw new Error(`${source} must be a version 1, 2, or 3 shape style.`);
@@ -37,6 +23,7 @@ export function readShapeStyle(
     const location = `${source}.${field}[${i}]`;
     if (!isObject(entry)) throw new Error(`${location} must name a draw routine.`);
     const { [nameField]: name, ...settings } = entry;
+    // Version 1 defined only fill and stroke layers.
     if (nameField === "kind" && name !== "fill" && name !== "stroke")
       throw new Error(`Invalid ${location}.kind.`);
     if (typeof name !== "string") throw new Error(`${location} must name a draw routine.`);
