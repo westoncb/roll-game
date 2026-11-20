@@ -4,45 +4,47 @@
     {
       "emission": { "kind": "burst", "count": 9 },
       "pass": "behind",
-      "offset": [3, -8],
+      "offset": [4, -8],
       "segment": [0, 16],
-      "direction": [-1.4, 1.4],
-      "speed": [32, 70],
-      "drag": 3.5,
-      "lifetime": [0.32, 0.55],
-      "radius": [2, 3.6],
+      "direction": [-1.25, 1.25],
+      "speed": [80, 136],
+      "drag": 2.2,
+      "lifetime": [0.34, 0.52],
+      "radius": [2.9, 4.8],
       "sizeOverLife": [
-        { "at": 0, "value": 0.6 },
-        { "at": 0.35, "value": 1.25 },
-        { "at": 1, "value": 1.8 }
+        { "at": 0, "value": 0.7 },
+        { "at": 0.35, "value": 1.15 },
+        { "at": 1, "value": 1.55 }
       ],
       "opacityOverLife": [
-        { "at": 0, "value": 0.32 },
-        { "at": 0.12, "value": 0.48 },
+        { "at": 0, "value": 0.6 },
+        { "at": 0.14, "value": 0.76 },
+        { "at": 0.46, "value": 0.57 },
         { "at": 1, "value": 0 }
       ],
-      "colorOverLife": "#b4c2b2",
-      "strength": { "amount": [0.25, 1], "speed": [0.55, 1], "size": [0.65, 1] }
+      "colorOverLife": "#e3c8a4",
+      "strength": { "amount": [0.3, 1], "speed": [0.72, 1], "size": [0.73, 1] }
     },
     {
-      "emission": { "kind": "burst", "count": 5 },
-      "pass": "behind",
-      "offset": [2, -5],
-      "segment": [0, 10],
+      "emission": { "kind": "burst", "count": 7 },
+      "pass": "front",
+      "offset": [2, -7],
+      "segment": [0, 14],
       "direction": [-1.1, 1.1],
-      "speed": [48, 96],
-      "acceleration": [-120, 0],
-      "lifetime": [0.16, 0.3],
-      "radius": [0.8, 1.4],
+      "speed": [88, 160],
+      "acceleration": [-195, 0],
+      "drag": 0.6,
+      "lifetime": [0.22, 0.39],
+      "radius": [1.35, 2.25],
       "stretch": 1.35,
       "rotation": [-1.57, 1.57],
       "angularSpeed": [-4, 4],
       "opacityOverLife": [
-        { "at": 0.35, "value": 0.78 },
+        { "at": 0.4, "value": 0.95 },
         { "at": 1, "value": 0 }
       ],
-      "colorOverLife": "#d0cfb8",
-      "strength": { "amount": [0, 1], "speed": [0.7, 1] }
+      "colorOverLife": "#f6dbaa",
+      "strength": { "amount": [0.12, 1], "speed": [0.76, 1], "size": [0.8, 1] }
     }
   ]
 }
