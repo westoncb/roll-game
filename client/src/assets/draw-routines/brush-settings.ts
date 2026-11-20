@@ -27,6 +27,13 @@ export function positive(settings: RoutineSettings, field: string, source: strin
   return value;
 }
 
+export function fraction(settings: RoutineSettings, field: string, source: string) {
+  const value = settings[field];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1)
+    throw new Error(`${source}.${field} must be between 0 and 1.`);
+  return value;
+}
+
 export function positiveRange(
   settings: RoutineSettings,
   field: string,

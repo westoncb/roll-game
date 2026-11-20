@@ -37,6 +37,18 @@ interface BoundaryEdge {
   transform: DOMMatrix;
 }
 
+/** Displace artwork by (dx, dy) per unit of distance outward. The edge stays fixed. */
+export function deformFromEdge(
+  ctx: CanvasRenderingContext2D,
+  edge: DOMMatrix,
+  dx: number,
+  dy: number
+) {
+  const { c: nx, d: ny, e: x, f: y } = edge;
+  const offset = nx * x + ny * y;
+  ctx.transform(1 + dx * nx, dy * nx, dx * ny, 1 + dy * ny, -dx * offset, -dy * offset);
+}
+
 function boundaryEdges(points: readonly ReadonlyVec2[]) {
   let area = 0;
   for (let i = 0; i < points.length; i++) {

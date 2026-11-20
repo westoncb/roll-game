@@ -1,15 +1,25 @@
 import type { DrawRoutine, RoutineSettings } from "../../engine/draw-routines";
-import { boundaryArtwork } from "./boundary";
-import { checkFields, color, positive, seededRandom } from "./brush-settings";
+import { boundaryArtwork, deformFromEdge } from "./boundary";
+import { checkFields, color, fraction, positive, seededRandom } from "./brush-settings";
+
+interface GrassPatch {
+  edge: DOMMatrix;
+  windPhase: number;
+  roots: Path2D;
+  leaves: Path2D;
+  tips: Path2D;
+}
 
 export function grass(settings: RoutineSettings, source: string): DrawRoutine {
   checkFields(
     settings,
-    ["height", "spacing", "pixelSize", "shadow", "leaf", "highlight"],
+    ["height", "spacing", "pixelSize", "shadow", "leaf", "highlight", "sway"],
     source
   );
   const height = positive(settings, "height", source);
   const spacing = positive(settings, "spacing", source);
+  // Maximum sideways travel as a fraction of blade height.
+  const sway = settings.sway === undefined ? 0 : fraction(settings, "sway", source);
   const pixel =
     settings.pixelSize === undefined ? 2 : positive(settings, "pixelSize", source);
   const shadow = color(settings, "shadow", source);
@@ -17,9 +27,8 @@ export function grass(settings: RoutineSettings, source: string): DrawRoutine {
   const highlight = color(settings, "highlight", source);
 
   const artwork = boundaryArtwork((edges, seed) => {
-    const roots = new Path2D(),
-      leaves = new Path2D(),
-      tips = new Path2D();
+    const patches: GrassPatch[] = [];
+    let patch: GrassPatch | undefined;
     const random = seededRandom(Math.imul(seed + 1, 0x27d4eb2d));
     const phase = random() * Math.PI * 2;
     const gap = () => spacing * (0.55 + random() * 0.85);
@@ -36,12 +45,26 @@ export function grass(settings: RoutineSettings, source: string): DrawRoutine {
       // Keep very long edges bounded even when an asset requests sub-pixel blades.
       const stride = Math.max(1, Math.ceil(length / pixel / 4096));
       const step = stride * pixel;
+      const patchColumns = Math.max(1, Math.round(36 / step));
       while (start < length) {
         const left = transform.e + Math.max(0, start) * transform.a;
         const right = transform.e + Math.min(length, end) * transform.a;
-        for (let col = Math.ceil(left / step - 0.5); col < right / step - 0.5; col++) {
-          const at = ((col + 0.5) * step - transform.e) / transform.a;
+        const firstCol = Math.ceil(left / step - 0.5);
+        for (let col = firstCol; col < right / step - 0.5; col++) {
+          const centerX = (col + 0.5) * step;
+          const at = (centerX - transform.e) / transform.a;
           const y = Math.round((transform.f + at * transform.b) / pixel);
+          if (!patch || (sway && (col === firstCol || col % patchColumns === 0))) {
+            patch = {
+              edge: transform,
+              windPhase: centerX / 74 + (y * pixel) / 190,
+              roots: new Path2D(),
+              leaves: new Path2D(),
+              tips: new Path2D()
+            };
+            patches.push(patch);
+          }
+          const { roots, leaves, tips } = patch;
           const taper = Math.min(1, (at - start) / height, (end - at) / height);
           const wave = Math.sin((col * step) / (height * 1.8) + phase);
           const rows = Math.min(
@@ -82,17 +105,26 @@ export function grass(settings: RoutineSettings, source: string): DrawRoutine {
       start -= length;
       end -= length;
     }
-    return { roots, leaves, tips };
+    return patches;
   });
 
   return (ctx, shape, frame) => {
-    const { roots, leaves, tips } = artwork(shape, frame.seed);
-    ctx.scale(pixel, pixel);
-    ctx.fillStyle = shadow;
-    ctx.fill(roots);
-    ctx.fillStyle = leaf;
-    ctx.fill(leaves);
-    ctx.fillStyle = highlight;
-    ctx.fill(tips);
+    for (const patch of artwork(shape, frame.seed)) {
+      ctx.save();
+      if (sway) {
+        const breeze =
+          0.75 * Math.sin(frame.time * 1.65 - patch.windPhase) +
+          0.25 * Math.sin(frame.time * 3.4 - 1.7 * patch.windPhase);
+        deformFromEdge(ctx, patch.edge, sway * breeze, 0);
+      }
+      ctx.scale(pixel, pixel);
+      ctx.fillStyle = shadow;
+      ctx.fill(patch.roots);
+      ctx.fillStyle = leaf;
+      ctx.fill(patch.leaves);
+      ctx.fillStyle = highlight;
+      ctx.fill(patch.tips);
+      ctx.restore();
+    }
   };
 }

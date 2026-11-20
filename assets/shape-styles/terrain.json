@@ -26,6 +26,7 @@
     },
     {
       "routine": "grass",
+      "sway": 0.28,
       "height": 15,
       "spacing": 46,
       "pixelSize": 2,
@@ -45,6 +46,8 @@
     },
     {
       "routine": "fungalStrands",
+      "pulse": 0.14,
+      "sway": 0.22,
       "width": [32, 84],
       "height": [16, 48],
       "spacing": 360,

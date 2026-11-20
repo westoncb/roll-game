@@ -1,13 +1,24 @@
 import type { DrawRoutine, RoutineSettings } from "../../engine/draw-routines";
-import { lerp } from "../../engine/math";
-import { boundaryArtwork } from "./boundary";
+import { lerp, tau } from "../../engine/math";
+import { boundaryArtwork, deformFromEdge } from "./boundary";
 import {
   checkFields,
   color,
+  fraction,
   positive,
   positiveRange,
   seededRandom
 } from "./brush-settings";
+
+interface FungalColony {
+  edge: DOMMatrix;
+  phase: number;
+  rate: number;
+  roots: Path2D;
+  threads: Path2D;
+  sacs: Path2D;
+  glints: Path2D;
+}
 
 export function fungalStrands(settings: RoutineSettings, source: string): DrawRoutine {
   checkFields(
@@ -21,7 +32,9 @@ export function fungalStrands(settings: RoutineSettings, source: string): DrawRo
       "filament",
       "leaf",
       "spore",
-      "highlight"
+      "highlight",
+      "pulse",
+      "sway"
     ],
     source
   );
@@ -29,6 +42,10 @@ export function fungalStrands(settings: RoutineSettings, source: string): DrawRo
     settings.width === undefined ? [64, 64] : positiveRange(settings, "width", source);
   const [minHeight, maxHeight] = positiveRange(settings, "height", source);
   const spacing = positive(settings, "spacing", source);
+  // Maximum change in a colony's depth as a fraction of its resting depth.
+  const pulse = settings.pulse === undefined ? 0 : fraction(settings, "pulse", source);
+  // Sideways travel along the ledge, also measured as a fraction of depth.
+  const sway = settings.sway === undefined ? 0 : fraction(settings, "sway", source);
   const pixel =
     settings.pixelSize === undefined ? 2 : positive(settings, "pixelSize", source);
   const shadow = color(settings, "shadow", source);
@@ -42,11 +59,9 @@ export function fungalStrands(settings: RoutineSettings, source: string): DrawRo
 
   const artwork = boundaryArtwork((edges, seed) => {
     // Build in whole pixels in shape space so even the growth on sloping rock has square steps.
-    const roots = new Path2D(),
-      threads = new Path2D(),
-      sacs = new Path2D(),
-      glints = new Path2D();
+    const colonies: FungalColony[] = [];
     const random = seededRandom(Math.imul(seed + 1, 0x85ebca6b));
+    const rhythm = seededRandom(Math.imul(seed + 1, 0x9e3779b1));
 
     for (const { length, transform } of edges) {
       const onTop = transform.d < -0.45;
@@ -96,6 +111,19 @@ export function fungalStrands(settings: RoutineSettings, source: string): DrawRo
       ) {
         const spread = Math.min(lerp(minWidth, maxWidth, random()) / 2, maxSpread);
         if (spread < 3 * pixel || patchStart + 2 * spread > length) continue;
+        // A still style can paint every colony in one pass.
+        if (pulse || sway || !colonies.length) {
+          colonies.push({
+            edge: transform,
+            phase: rhythm() * tau,
+            rate: tau / (3.9 + 1.6 * rhythm()),
+            roots: new Path2D(),
+            threads: new Path2D(),
+            sacs: new Path2D(),
+            glints: new Path2D()
+          });
+        }
+        const { roots, threads, sacs, glints } = colonies[colonies.length - 1];
         const center = patchStart + spread;
         const height = lerp(minHeight, maxHeight, random());
         // The sampled height includes the square pixels and spore sacs at the tips.
@@ -139,19 +167,40 @@ export function fungalStrands(settings: RoutineSettings, source: string): DrawRo
         }
       }
     }
-    return { roots, threads, sacs, glints };
+    return colonies;
   });
 
   return (ctx, shape, frame) => {
-    const { roots, threads, sacs, glints } = artwork(shape, frame.seed);
-    ctx.scale(pixel, pixel);
-    ctx.fillStyle = shadow;
-    ctx.fill(roots);
-    ctx.fillStyle = filament;
-    ctx.fill(threads);
-    ctx.fillStyle = spore;
-    ctx.fill(sacs);
-    ctx.fillStyle = highlight;
-    ctx.fill(glints);
+    for (const colony of artwork(shape, frame.seed)) {
+      ctx.save();
+      const phase = frame.time * colony.rate + colony.phase;
+      const breath = Math.sin(phase);
+      if (pulse || sway) {
+        // A quarter-cycle offset makes the tips trace a small oval.
+        const { a, b, c, d } = colony.edge;
+        const swing = sway * Math.cos(phase);
+        const stretch = pulse * breath;
+        deformFromEdge(ctx, colony.edge, swing * a + stretch * c, swing * b + stretch * d);
+      }
+      ctx.scale(pixel, pixel);
+      ctx.fillStyle = shadow;
+      ctx.fill(colony.roots);
+      ctx.fillStyle = filament;
+      ctx.fill(colony.threads);
+      ctx.fillStyle = spore;
+      ctx.fill(colony.sacs);
+      if (pulse) {
+        // At full extension, filaments take on the spore color and sacs catch the light.
+        const alpha = ctx.globalAlpha;
+        ctx.globalAlpha *= (Math.min(1, 3 * pulse) * (1 + breath)) / 2;
+        ctx.fill(colony.threads);
+        ctx.fillStyle = highlight;
+        ctx.fill(colony.sacs);
+        ctx.globalAlpha = alpha;
+      }
+      ctx.fillStyle = highlight;
+      ctx.fill(colony.glints);
+      ctx.restore();
+    }
   };
 }
