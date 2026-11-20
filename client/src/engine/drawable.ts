@@ -1,16 +1,22 @@
 import { mat2d, vec2, type ReadonlyMat2d, type ReadonlyVec2 } from "gl-matrix";
 import { appendTransform, applyMatrix, Transform2D } from "./transform";
 import { lerp } from "./math";
-import { drawShape, type StyledShape } from "./shape";
+import type { StyledShape } from "./shape";
+import type { DrawFrame } from "./draw-routines";
 
-export type DrawableContent = ((ctx: CanvasRenderingContext2D) => void) | StyledShape;
+export type DrawableContent =
+  | ((ctx: CanvasRenderingContext2D, frame: DrawFrame) => void)
+  | StyledShape;
 type DrawableColor = string | { fill: string; stroke: string };
+let nextDrawSeed = 0;
 
 /** Draws in local coordinates. Children paint after their parent, in creation order. */
 export class Drawable2D extends Transform2D {
   declare readonly parent: Drawable2D | null;
   /** Default fill and stroke for this drawable and its descendants. */
   color?: DrawableColor;
+  /** Override to reproduce the same procedural artwork across instances. */
+  drawSeed = nextDrawSeed++;
   private readonly children: Drawable2D[] = [];
   private previous?: Transform2D;
   private readonly sampledPosition = vec2.create();
@@ -49,9 +55,9 @@ export class Drawable2D extends Transform2D {
     for (const child of this.children) child.snapshotPose();
   }
 
-  render(ctx: CanvasRenderingContext2D, alpha = 1) {
+  render(ctx: CanvasRenderingContext2D, alpha = 1, time = 0) {
     this.samplePose(alpha);
-    this.paintSampled(ctx);
+    this.paintSampled(ctx, time);
   }
 
   /** Prepare the whole hierarchy so passes can share the same interpolated pose. */
@@ -84,20 +90,24 @@ export class Drawable2D extends Transform2D {
     for (const child of this.children) child.sample(alpha, this.sampledWorld);
   }
 
-  paintSampled(ctx: CanvasRenderingContext2D) {
+  paintSampled(ctx: CanvasRenderingContext2D, time = 0) {
     if (this.content) {
       ctx.save();
-      applyMatrix(ctx, this.sampledWorld);
-      const color = this.paintColor;
-      if (typeof color === "string") ctx.fillStyle = ctx.strokeStyle = color;
-      else if (color) {
-        ctx.fillStyle = color.fill;
-        ctx.strokeStyle = color.stroke;
+      try {
+        applyMatrix(ctx, this.sampledWorld);
+        const color = this.paintColor;
+        if (typeof color === "string") ctx.fillStyle = ctx.strokeStyle = color;
+        else if (color) {
+          ctx.fillStyle = color.fill;
+          ctx.strokeStyle = color.stroke;
+        }
+        const frame = { time, seed: this.drawSeed };
+        if (typeof this.content === "function") this.content(ctx, frame);
+        else this.content.style.draw(ctx, this.content.shape, frame);
+      } finally {
+        ctx.restore();
       }
-      if (typeof this.content === "function") this.content(ctx);
-      else drawShape(ctx, this.content);
-      ctx.restore();
     }
-    for (const child of this.children) child.paintSampled(ctx);
+    for (const child of this.children) child.paintSampled(ctx, time);
   }
 }

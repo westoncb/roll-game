@@ -33,8 +33,6 @@ function trace(start: vec2, radius: number, ground: GroundPolygon[]): Sample[] {
 
 export class GravityField {
   private readonly streaks: Streak[] = [];
-  private previousTime = 0;
-  private time = 0;
 
   constructor(width: number, height: number, radius: number, ground: GroundPolygon[]) {
     if (!ground.some((polygon) => polygon.gravityScale !== 0)) return;
@@ -60,13 +58,7 @@ export class GravityField {
     }
   }
 
-  step(dt: number) {
-    this.previousTime = this.time;
-    this.time += dt;
-  }
-
-  draw(ctx: CanvasRenderingContext2D, alpha: number) {
-    const time = lerp(this.previousTime, this.time, alpha);
+  draw(ctx: CanvasRenderingContext2D, time: number) {
     ctx.save();
     ctx.strokeStyle = "#adc9ce";
     ctx.lineCap = "round";

@@ -6,6 +6,7 @@ import type { Entity } from "./engine/entity";
 import { GravityField } from "./gravity-field";
 import { GroundPolygon } from "./engine/ground";
 import type { InputState } from "./engine/input";
+import { lerp } from "./engine/math";
 import { ParticleSystem } from "./engine/particles/system";
 import { stepPhysics } from "./engine/physics";
 import { Player } from "./player/player";
@@ -26,6 +27,8 @@ export class Level {
   readonly ground: GroundPolygon[];
   private readonly groundVisual = new Drawable2D();
   private readonly gravityField: GravityField;
+  private previousTime = 0;
+  private time = 0;
   readonly entities: Entity[];
 
   constructor(data: LevelData) {
@@ -88,15 +91,17 @@ export class Level {
     }
     for (const entity of this.entities) entity.afterPhysics?.(dt, this.ground);
     this.particles.step(dt);
-    this.gravityField.step(dt);
+    this.previousTime = this.time;
+    this.time += dt;
   }
 
   draw(ctx: CanvasRenderingContext2D, alpha = 1) {
+    const time = lerp(this.previousTime, this.time, alpha);
     for (const entity of this.entities) entity.visual.samplePose(alpha);
-    this.gravityField.draw(ctx, alpha);
-    this.groundVisual.render(ctx, alpha);
+    this.gravityField.draw(ctx, time);
+    this.groundVisual.render(ctx, alpha, time);
     this.particles.draw(ctx, "behind", alpha);
-    for (const entity of this.entities) entity.visual.paintSampled(ctx);
+    for (const entity of this.entities) entity.visual.paintSampled(ctx, time);
     this.particles.draw(ctx, "front", alpha);
   }
 }

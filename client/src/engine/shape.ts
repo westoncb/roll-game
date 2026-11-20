@@ -1,4 +1,11 @@
 import type { ReadonlyVec2 } from "gl-matrix";
+import {
+  drawRoutines,
+  type BoundDrawCall,
+  type DrawCall,
+  type DrawFrame,
+  type DrawRoutines
+} from "./draw-routines";
 
 /** Geometry in the drawable's local coordinates. */
 export type Shape2D =
@@ -12,47 +19,39 @@ export type Shape2D =
       readonly cornerRadius?: number;
     };
 
-export interface ShapeStyle {
-  /** Painted in order, back to front. */
-  readonly layers: readonly ShapeLayer[];
-}
+export class ShapeStyle {
+  readonly calls: readonly DrawCall[];
+  readonly #draws: readonly BoundDrawCall[];
 
-export type ShapeLayer = Readonly<
-  ({ kind: "fill" } | { kind: "stroke"; width: number }) & {
-    /** Omit to use the drawable's fill or stroke color. */
-    color?: string;
-    opacity?: number;
+  constructor(
+    calls: readonly DrawCall[],
+    routines: DrawRoutines = drawRoutines,
+    source = "ShapeStyle.calls"
+  ) {
+    this.calls = Object.freeze(calls.map((call) => Object.freeze({ ...call })));
+    this.#draws = this.calls.map((call, i) => {
+      const location = `${source}[${i}]`;
+      if (!Object.hasOwn(routines, call.routine))
+        throw new Error(`Unknown draw routine "${call.routine}" at ${location}.`);
+      return routines[call.routine](call, location);
+    });
   }
->;
+
+  draw(ctx: CanvasRenderingContext2D, shape: Shape2D, frame: DrawFrame) {
+    for (const draw of this.#draws) {
+      ctx.save();
+      try {
+        ctx.beginPath();
+        draw(ctx, shape, frame);
+      } finally {
+        ctx.restore();
+        ctx.beginPath();
+      }
+    }
+  }
+}
 
 export interface StyledShape {
   readonly shape: Shape2D;
   readonly style: ShapeStyle;
-}
-
-export function drawShape(ctx: CanvasRenderingContext2D, { shape, style }: StyledShape) {
-  const path = new Path2D();
-  if (shape.kind === "polygon") {
-    const { vertices } = shape;
-    if (vertices.length < 3) return;
-    path.moveTo(vertices[0][0], vertices[0][1]);
-    for (let i = 1; i < vertices.length; i++) path.lineTo(vertices[i][0], vertices[i][1]);
-    path.closePath();
-  } else {
-    path.roundRect(shape.x, shape.y, shape.width, shape.height, shape.cornerRadius ?? 0);
-  }
-
-  for (const layer of style.layers) {
-    ctx.save();
-    if (layer.opacity !== undefined) ctx.globalAlpha *= layer.opacity;
-    if (layer.kind === "fill") {
-      if (layer.color !== undefined) ctx.fillStyle = layer.color;
-      ctx.fill(path);
-    } else {
-      if (layer.color !== undefined) ctx.strokeStyle = layer.color;
-      ctx.lineWidth = layer.width;
-      ctx.stroke(path);
-    }
-    ctx.restore();
-  }
 }
