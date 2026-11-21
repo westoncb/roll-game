@@ -5,7 +5,8 @@ import type { Entity } from "../engine/entity";
 import { GroundPolygon } from "../engine/ground";
 import { tau } from "../engine/math";
 import type { PhysicsBody } from "../engine/physics";
-import type { FungalColony, Junction } from "./colony";
+import type { FungalColony } from "./colony";
+import type { Vertex } from "./network";
 import type { ColonyPalette } from "./palette";
 
 // Unit geometry is shared; each colony scales both the drawing and casts by its radius.
@@ -55,7 +56,7 @@ type ReturnTrip =
       elapsed: number;
     };
 
-export class FungalNode implements Entity {
+export class FungalGem implements Entity {
   readonly radius: number;
   readonly visual: Drawable2D;
   private age: number;
@@ -64,11 +65,11 @@ export class FungalNode implements Entity {
   private trip: ReturnTrip | null = null;
   constructor(
     readonly id: string,
-    readonly junction: Junction,
+    readonly vertex: Vertex,
     private readonly colony: FungalColony,
     growing: boolean
   ) {
-    this.radius = colony.tuning.nodeRadius;
+    this.radius = colony.tuning.gemRadius;
     const animating = growing && colony.tuning.gemGrowSeconds > 0;
     this.age = animating ? 0 : colony.tuning.gemGrowSeconds;
     this.visual = new Drawable2D((ctx) => {
@@ -76,7 +77,7 @@ export class FungalNode implements Entity {
       ctx.scale(this.radius, this.radius);
       drawGem(ctx, colony.palette);
     }, colony.visual);
-    vec2.copy(this.visual.position, junction.position);
+    vec2.copy(this.visual.position, vertex.position);
     vec2.set(this.visual.scale, animating ? 0 : 1, animating ? 0 : 1);
   }
 
@@ -128,7 +129,7 @@ export class FungalNode implements Entity {
   }
 
   reelTo(receiver: PhysicsBody, speed: number) {
-    this.colony.detachNode(this);
+    this.colony.detachGem(this);
     this.trip = {
       phase: "reeling",
       receiver,

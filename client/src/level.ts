@@ -88,7 +88,7 @@ export class Level {
           ? { kind: "clingable", ...groundHit }
           : null;
         for (const colony of this.fungalColonies) {
-          const gem = colony.castNode(from, to);
+          const gem = colony.castGem(from, to);
           if (gem && (!first || gem.fraction < first.fraction))
             first = { kind: "gem", ...gem };
         }

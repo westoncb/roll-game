@@ -1,6 +1,6 @@
 import { vec2 } from "gl-matrix";
 import { fiberColorSteps, type ColonyTuning } from "./config";
-import { FiberNetwork, Stretch, type FiberSegment, type Strand } from "./network";
+import { type Stretch, type FiberSegment, type Strand } from "./network";
 import type { ColonyPalette } from "./palette";
 
 const tileSize = 48;
@@ -72,45 +72,18 @@ function stroke(
   ctx.stroke();
 }
 
-// Integral of unit wound pressure. Each pulse holds, then releases linearly.
-// Integrating between tissue ticks keeps the dose independent of frame/tick frequency.
-function woundDose(age: number, tuning: Readonly<ColonyTuning>) {
-  const t = Math.max(0, age - tuning.woundFlashSeconds);
-  const hold = tuning.woundWitherSeconds,
-    release = tuning.woundRecoverSeconds;
-  const tail = Math.min(release, Math.max(0, t - hold));
-  return t >= hold + release
-    ? 1
-    : (Math.min(t, hold) + tail * (1 - tail / (2 * release))) / (hold + release / 2);
-}
-
-function woundDamage(strength: number, tuning: Readonly<ColonyTuning>) {
-  // Even a saturated wound takes the configured wither time to consume healthy tissue.
-  return Math.min(
-    strength / tuning.woundKillStrength,
-    1 + tuning.woundRecoverSeconds / (2 * tuning.woundWitherSeconds)
-  );
-}
-
 export class FungalFabric {
-  readonly network: FiberNetwork;
   readonly bounds = {
     min: vec2.fromValues(Infinity, Infinity),
     max: vec2.fromValues(-Infinity, -Infinity)
   };
   private patchSurface?: CanvasRenderingContext2D;
   private readonly tiles = new Map<string, Tile>();
-  private readonly wounded = new Set<Stretch>();
-  private readonly ash = new Map<Stretch, number>();
-  private time = 0;
-
   constructor(
     private readonly palette: ColonyPalette,
     private readonly tuning: Readonly<ColonyTuning>,
     private readonly releaseAsh?: (position: vec2, amount: number) => void
-  ) {
-    this.network = new FiberNetwork(tuning);
-  }
+  ) {}
 
   enclose(p: vec2, r: number) {
     const { min, max } = this.bounds;
@@ -215,28 +188,7 @@ export class FungalFabric {
     }
   }
 
-  expose(s: Stretch, start: number, strength: number) {
-    if (s.dead) return;
-    // Combine overlapping wounds, bounded by the strength at an extraction site.
-    const old = s.wound;
-    let pendingDose = 0;
-    if (old) {
-      start = Math.max(old.start, start);
-      const spent = woundDose(start - old.start, this.tuning);
-      pendingDose =
-        old.pendingDose +
-        (spent - woundDose(this.time - old.start, this.tuning)) *
-          woundDamage(old.strength, this.tuning);
-      strength = Math.min(1, strength + old.strength * (1 - spent));
-    }
-    s.wound = { start, strength, pendingDose };
-    this.wounded.add(s);
-  }
-
-  private shed(stretch: Stretch) {
-    this.network.sever(stretch);
-    this.wounded.delete(stretch);
-    this.ash.set(stretch, this.time + this.tuning.ashHoldSeconds);
+  becomeAsh(stretch: Stretch) {
     for (const s of stretch.strokes) {
       for (const tile of this.segmentTiles(s)) {
         if (s.strand.kind === "main") {
@@ -248,66 +200,24 @@ export class FungalFabric {
     }
   }
 
-  shedDisconnected() {
-    this.network.refreshDistances();
-    for (const stretch of this.network.stretches)
-      if (!Number.isFinite(stretch.from.distance)) this.shed(stretch);
-  }
-
-  updateTissue(time: number) {
-    if (time <= this.time) return;
-    const dt = time - this.time;
-    this.time = time;
-    const dead: Stretch[] = [];
-    for (const s of this.network.stretches) if (!this.updateStretch(s, dt)) dead.push(s);
-    if (dead.length) {
-      for (const s of dead) this.shed(s);
-      this.shedDisconnected();
-    }
-    this.crumble(time);
-  }
-
-  private updateStretch(s: Stretch, dt: number) {
-    const t = this.tuning;
-    const supply = this.network.supply(s.midpointDistance);
-    const balance = supply / t.maintenanceSupply - 1;
-    let change = (dt * balance) / t.starvationSeconds;
-    if (balance < 0) change *= 1 + t.lowSupplyDecayBoost * balance ** 2;
-    if (s.wound) {
-      const age = this.time - s.wound.start;
-      const dose = woundDose(age, t);
-      change -=
-        s.wound.pendingDose +
-        (dose - woundDose(age - dt, t)) * woundDamage(s.wound.strength, t);
-      s.wound.pendingDose = 0;
-      if (dose >= 1) {
-        s.wound = undefined;
-        this.wounded.delete(s);
-      }
-    }
-    s.health = Math.max(0, Math.min(1, s.health + change));
-    if (s.health === 0) return false;
+  updateAppearance(s: Stretch, supply: number) {
     const healthBand = Math.round(s.health * fiberColorSteps),
       supplyBand = Math.round(supply * fiberColorSteps);
     if (
       healthBand !== s.healthBand ||
-      (t.showNutrientSupply && supplyBand !== s.supplyBand)
+      (this.tuning.showNutrientSupply && supplyBand !== s.supplyBand)
     )
       for (const stroke of s.strokes)
         for (const tile of this.segmentTiles(stroke)) invalidate(tile, stroke);
     s.healthBand = healthBand;
     s.supplyBand = supplyBand;
-    return true;
   }
 
-  private crumble(time: number) {
-    if (!this.ash.size) return;
+  crumble(stretches: Iterable<Stretch>) {
     // Batch simultaneous shedding locally, while keeping the flakes on real fiber positions.
     const spacing = this.tuning.ashBurstSpacing;
     const bursts = new Map<string, { position: vec2; amount: number }>();
-    for (const [stretch, expiry] of this.ash) {
-      if (time < expiry) continue;
-      this.ash.delete(stretch);
+    for (const stretch of stretches) {
       for (const s of stretch.strokes) {
         for (const tile of this.segmentTiles(s)) {
           tile.segments.delete(s);
@@ -343,7 +253,7 @@ export class FungalFabric {
     return result;
   }
 
-  draw(ctx: CanvasRenderingContext2D, time: number) {
+  draw(ctx: CanvasRenderingContext2D, time: number, wounded: ReadonlySet<Stretch>) {
     for (const tile of this.tiles.values()) {
       const x = tile.x * tileSize,
         y = tile.y * tileSize;
@@ -382,7 +292,7 @@ export class FungalFabric {
     }
     const alpha = ctx.globalAlpha;
     ctx.lineCap = "round";
-    for (const s of this.wounded) {
+    for (const s of wounded) {
       const wound = s.wound!;
       const flash =
         wound.strength *

@@ -1,6 +1,7 @@
-import type { vec2 } from "gl-matrix";
-import { fiberColorSteps, type ColonyTuning } from "./config";
+import { vec2 } from "gl-matrix";
+import { fiberColorSteps } from "./config";
 import { DistanceQueue } from "./distance-queue";
+import type { FungalGem } from "./gem";
 
 export type Strand = { kind: "main"; trailId: symbol } | { kind: "minor" };
 
@@ -17,11 +18,18 @@ export type FiberSegment = {
   owner: Stretch;
 };
 
-export class FiberPoint {
+export class Vertex {
   readonly incident = new Set<Stretch>();
-  source = false;
+  gem?: FungalGem;
   distance = Infinity;
   constructor(public position: vec2) {}
+
+  get health() {
+    if (this.gem) return 1;
+    let health = 0;
+    for (const stretch of this.incident) health = Math.max(health, stretch.health);
+    return health;
+  }
 }
 
 export class Stretch {
@@ -35,13 +43,13 @@ export class Stretch {
   sealed = false;
 
   constructor(
-    readonly from: FiberPoint,
-    readonly to: FiberPoint,
+    readonly from: Vertex,
+    readonly to: Vertex,
     readonly trailId: symbol,
     public length: number
   ) {}
 
-  other(point: FiberPoint) {
+  other(point: Vertex) {
     return point === this.from ? this.to : this.from;
   }
 
@@ -51,70 +59,67 @@ export class Stretch {
 }
 
 export class FiberNetwork {
-  readonly points = new Map<vec2, FiberPoint>();
+  readonly vertices = new Set<Vertex>();
   readonly stretches = new Set<Stretch>();
   private dirty = false;
 
-  constructor(private readonly tuning: Readonly<ColonyTuning>) {}
+  constructor(private readonly maxStretchLength: number) {}
 
-  private point(position: vec2) {
-    let point = this.points.get(position);
-    if (!point) {
-      point = new FiberPoint(position);
-      this.points.set(position, point);
-    }
-    return point;
+  createVertex(position: vec2) {
+    const vertex = new Vertex(position);
+    this.vertices.add(vertex);
+    return vertex;
   }
 
-  setSource(position: vec2, attached: boolean) {
-    const point = attached ? this.point(position) : this.points.get(position);
-    if (!point || point.source === attached) return;
-    point.source = attached;
-    if (attached) point.distance = 0;
-    else if (!point.incident.size) this.points.delete(position);
+  setGem(vertex: Vertex, gem: FungalGem | undefined) {
+    vertex.gem = gem;
+    if (gem) vertex.distance = 0;
+    else if (!vertex.incident.size) this.vertices.delete(vertex);
     this.dirty = true;
   }
 
-  // A free tip extends its own route. Only a connection to an existing point
-  // can shorten a route elsewhere. Coordinate equality alone is not a fusion.
-  extend(a: vec2, b: vec2, trailId: symbol, length: number) {
-    const from = this.points.get(a)!;
-    const existing = this.points.get(b);
+  extend(from: Vertex, position: vec2, trailId: symbol) {
+    const length = vec2.distance(from.position, position);
     const tail = from.incident.size === 1 ? from.incident.values().next().value : undefined;
     if (
-      !existing &&
-      !from.source &&
+      !from.gem &&
       tail &&
       tail.to === from &&
       tail.trailId === trailId &&
       !tail.sealed &&
-      tail.length + length <= this.tuning.stretchLength
+      tail.length + length <= this.maxStretchLength
     ) {
-      this.points.delete(a);
-      from.position = b;
-      this.points.set(b, from);
+      from.position = position;
       from.distance += length;
       tail.length += length;
       return tail;
     }
 
-    const to = existing ?? this.point(b);
+    const to = this.createVertex(position);
+    to.distance = from.distance + length;
+    return this.connect(from, to, trailId, length);
+  }
+
+  join(from: Vertex, to: Vertex, trailId: symbol) {
+    this.dirty = true;
+    return this.connect(from, to, trailId, vec2.distance(from.position, to.position));
+  }
+
+  private connect(from: Vertex, to: Vertex, trailId: symbol, length: number) {
     const stretch = new Stretch(from, to, trailId, length);
     from.incident.add(stretch);
     to.incident.add(stretch);
     this.stretches.add(stretch);
-    if (existing) this.dirty = true;
-    else to.distance = from.distance + length;
     return stretch;
   }
 
   refreshDistances() {
     if (!this.dirty) return;
     this.dirty = false;
-    const queue = new DistanceQueue<FiberPoint>();
-    for (const point of this.points.values()) {
-      point.distance = point.source ? 0 : Infinity;
-      if (point.source) queue.add(point, 0);
+    const queue = new DistanceQueue<Vertex>();
+    for (const point of this.vertices) {
+      point.distance = point.gem ? 0 : Infinity;
+      if (point.gem) queue.add(point, 0);
     }
     for (let next; (next = queue.take()); ) {
       const { value: point, distance } = next;
@@ -130,23 +135,12 @@ export class FiberNetwork {
   }
 
   sever(stretch: Stretch) {
-    stretch.dead = true;
-    stretch.health = 0;
     this.stretches.delete(stretch);
     for (const point of [stretch.from, stretch.to]) {
       point.incident.delete(stretch);
-      if (!point.source && !point.incident.size) this.points.delete(point.position);
+      if (!point.gem && !point.incident.size) this.vertices.delete(point);
     }
     // Removing an already unreachable edge cannot change a surviving route.
     if (Number.isFinite(stretch.from.distance)) this.dirty = true;
-  }
-
-  supply(distance: number) {
-    return Math.exp(-distance / this.tuning.nutrientLength);
-  }
-
-  growthFactor(distance: number, health: number) {
-    const maintenance = this.tuning.maintenanceSupply;
-    return health * Math.max(0, (this.supply(distance) - maintenance) / (1 - maintenance));
   }
 }

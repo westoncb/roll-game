@@ -1,9 +1,9 @@
 import type { ColonyTuning } from "./config";
 import { DistanceQueue } from "./distance-queue";
-import type { FungalFabric } from "./fabric";
-import { Stretch, type FiberPoint } from "./network";
+import type { ColonyTissue } from "./tissue";
+import { Stretch, type Vertex } from "./network";
 
-type Target = FiberPoint | Stretch;
+type Target = Vertex | Stretch;
 type Arrival = { target: Target; via?: Stretch };
 
 // Travel along the main graph; each midpoint reacts together with its minor fibers.
@@ -13,7 +13,7 @@ export class WoundPulse {
   private readonly reach: number;
 
   constructor(
-    source: FiberPoint,
+    source: Vertex,
     private readonly started: number,
     private readonly tuning: Readonly<ColonyTuning>
   ) {
@@ -27,7 +27,7 @@ export class WoundPulse {
     this.arrivals.add({ target, via }, distance);
   }
 
-  advance(time: number, fabric: FungalFabric) {
+  advance(time: number, tissue: ColonyTissue) {
     const { woundSpeed, woundDecayLength } = this.tuning;
     const traveled = (time - this.started) * woundSpeed;
     for (let arrival; (arrival = this.arrivals.take(traveled)); ) {
@@ -38,12 +38,12 @@ export class WoundPulse {
       if (via?.dead || this.reached.has(target)) continue;
       this.reached.add(target);
       if (target instanceof Stretch) {
-        fabric.expose(
+        tissue.expose(
           target,
           this.started + distance / woundSpeed,
           Math.exp(-distance / woundDecayLength)
         );
-      } else if (!target.source) {
+      } else if (!target.gem) {
         for (const stretch of target.incident) {
           this.schedule(stretch, distance + stretch.length / 2, stretch);
           this.schedule(stretch.other(target), distance + stretch.length, stretch);

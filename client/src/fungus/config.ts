@@ -18,11 +18,12 @@ export const defaultColonyTuning = {
   gemLaunchSeconds: 6, // Time for a mature gem to earn a new main head.
   gemLaunchReach: 56, // Distance to look for open growing space around a gem.
 
-  // A split or a new group of minor buds can form a gem this far from other gems.
-  branchKnotSpacing: 108,
+  // Main tips check for a gem at splits and after this much travel.
+  gemCheckDistance: 20,
+  gemSpacing: 108, // Minimum separation from other gems for a main-tip gem.
   fusionArrivals: 3, // Two tips establish a junction and count as the first two arrivals.
-  fusionKnotSpacingRadii: 2, // Minimum fusion-gem spacing in multiples of nodeRadius.
-  nodeRadius: 16,
+  fusionGemSpacingRadii: 2, // Minimum fusion-gem spacing in multiples of gemRadius.
+  gemRadius: 16,
   gemGrowSeconds: 0.38,
   gemCollectSeconds: 0.22,
 
@@ -96,8 +97,8 @@ function validTuning(key: keyof ColonyTuning, value: number) {
       return value > 0 && value < 1;
     case "nutrientStepSeconds":
       return value >= 0.001;
-    case "branchKnotSpacing":
-    case "fusionKnotSpacingRadii":
+    case "gemSpacing":
+    case "fusionGemSpacingRadii":
     case "mergeRadius":
     case "attractionRadius":
     case "followRadius":
@@ -117,6 +118,14 @@ export function resolveColonyTuning(value: unknown, colonyId: string): ColonyTun
   if (value !== undefined && (!record(value) || Array.isArray(value)))
     throw new Error(`Expected a tuning object in fungal colony "${colonyId}".`);
   const overrides = { ...value };
+  for (const [oldKey, key] of Object.entries({
+    nodeRadius: "gemRadius",
+    branchKnotSpacing: "gemSpacing",
+    fusionKnotSpacingRadii: "fusionGemSpacingRadii"
+  })) {
+    if (oldKey in overrides && !(key in overrides)) overrides[key] = overrides[oldKey];
+    delete overrides[oldKey];
+  }
   // Previously exported level data can include all defaults from the transport model.
   for (const retired of [
     "gemOutput",
