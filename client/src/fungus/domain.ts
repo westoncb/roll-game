@@ -6,8 +6,8 @@ import type { GroundPolygon } from "../engine/ground";
 export class GrowthDomain {
   private readonly obstacles;
   constructor(
-    private readonly width: number,
-    private readonly height: number,
+    readonly width: number,
+    readonly height: number,
     ground: GroundPolygon[]
   ) {
     this.obstacles = ground.map((polygon) => {

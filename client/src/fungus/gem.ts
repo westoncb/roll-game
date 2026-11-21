@@ -6,7 +6,7 @@ import { GroundPolygon } from "../engine/ground";
 import { tau } from "../engine/math";
 import type { PhysicsBody } from "../engine/physics";
 import type { FungalColony } from "./colony";
-import type { Vertex } from "./network";
+import type { Vertex } from "./mycelium";
 import type { ColonyPalette } from "./palette";
 
 // Unit geometry is shared; each colony scales both the drawing and casts by its radius.

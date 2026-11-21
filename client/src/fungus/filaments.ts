@@ -2,11 +2,8 @@ import { vec2 } from "gl-matrix";
 import { seededRandom, tau } from "../engine/math";
 import type { ColonyTuning } from "./config";
 import type { GrowthDomain } from "./domain";
-import type { FungalFabric } from "./fabric";
-import type { Stretch } from "./network";
-import type { ColonyTissue } from "./tissue";
+import type { Mycelium, Stretch } from "./mycelium";
 
-const minorStrand = { kind: "minor" } as const;
 export type Buds = {
   next: number;
   left: number;
@@ -36,10 +33,7 @@ export class Filaments {
 
   constructor(
     seed: number,
-    private readonly tuning: Readonly<ColonyTuning>,
-    private readonly domain: GrowthDomain,
-    private readonly fabric: FungalFabric,
-    private readonly tissue: ColonyTissue
+    private readonly tuning: Readonly<ColonyTuning>
   ) {
     this.random = seededRandom(seed);
   }
@@ -89,22 +83,21 @@ export class Filaments {
     buds.next -= length;
   }
 
-  grow(tick: number) {
+  grow(tick: number, domain: GrowthDomain, mycelium: Mycelium) {
     const active: Filament[] = [];
     const rand = this.random;
     for (const f of this.active) {
-      if (f.owner.dead) continue;
       if (tick < f.born) {
         active.push(f);
         continue;
       }
-      f.credit += this.tissue.growthFactor(f.owner.midpointDistance, f.owner.health);
+      f.credit += mycelium.growthAt(f.owner);
       if (f.credit < 1) {
         active.push(f);
         continue;
       }
       f.credit--;
-      if (f.length + f.speed > f.budget || this.fabric.crowded(f.p, "minor")) continue;
+      if (f.length + f.speed > f.budget || mycelium.fabric.crowded(f.p, "minor")) continue;
       const [x, y] = f.p;
       const drift =
         0.49 * Math.sin(x / 24 + y / 36) +
@@ -116,8 +109,8 @@ export class Filaments {
         x + f.speed * Math.cos(f.angle),
         y + f.speed * Math.sin(f.angle)
       );
-      if (!this.domain.clear(f.p, p, this.tuning.minorRadius)) continue;
-      this.fabric.deposit(f.p, p, minorStrand, tick, f.owner);
+      if (!domain.clear(f.p, p, this.tuning.minorRadius)) continue;
+      mycelium.fabric.deposit(f.owner.fibers, f.p, p, tick);
       f.p = p;
       f.length += f.speed;
       active.push(f);
@@ -139,7 +132,7 @@ export class Filaments {
     this.active = active;
   }
 
-  prune() {
-    this.active = this.active.filter((filament) => !filament.owner.dead);
+  prune(living: ReadonlySet<Stretch>) {
+    this.active = this.active.filter((f) => living.has(f.owner));
   }
 }

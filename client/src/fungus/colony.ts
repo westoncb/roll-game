@@ -13,13 +13,9 @@ import { GrowthDomain } from "./domain";
 import { FungalGem } from "./gem";
 import { colonyPalette, type ColonyPalette } from "./palette";
 import { FungalFabric } from "./fabric";
-import { FiberNetwork, Vertex, type Strand } from "./network";
-import { Filaments, type Buds } from "./filaments";
-import { ColonyTissue } from "./tissue";
+import { Mycelium, Vertex, type Trail } from "./mycelium";
 
-type MainStrand = Extract<Strand, { kind: "main" }>;
-type MainGrowth = { vertex: Vertex; strand: MainStrand; buds: Buds };
-type Tip = MainGrowth & {
+type Tip = Trail & {
   angle: number;
   bend: number;
   age: number;
@@ -34,15 +30,21 @@ type Fusion = { a: Proposal; target: Proposal | Vertex; gap: number };
 
 export class FungalColony implements Entity {
   readonly id: string;
-  readonly gems = new Map<string, FungalGem>();
+  get gems() {
+    return this.mycelium.gems;
+  }
   readonly palette: ColonyPalette;
   readonly tuning: Readonly<ColonyTuning>;
   readonly fabric: FungalFabric;
   private readonly detached = new Set<FungalGem>();
-  private readonly network: FiberNetwork;
-  private readonly tissue: ColonyTissue;
+  private readonly mycelium: Mycelium<FungalGem>;
   readonly visual = new Drawable2D((ctx) => {
-    this.fabric.draw(ctx, this.time, this.tissue.wounded);
+    this.fabric.draw(ctx);
+    for (const [s, wound] of this.mycelium.wounds.active) {
+      const flash =
+        wound.strength * (1 - (this.time - wound.start) / this.tuning.woundFlashSeconds);
+      if (flash > 0) this.fabric.flash(ctx, s.fibers, flash);
+    }
     ctx.fillStyle = this.palette.tip;
     ctx.beginPath();
     for (const tip of this.tips) {
@@ -52,7 +54,6 @@ export class FungalColony implements Entity {
     ctx.fill();
   });
   private tips: Tip[] = [];
-  private readonly filaments: Filaments;
   // Authored gem sites and tip fusions attract future growth. Count arrivals per site.
   private readonly fusionSites = new Map<Vertex, number>();
   private readonly random;
@@ -71,25 +72,17 @@ export class FungalColony implements Entity {
     this.tuning = resolveColonyTuning(data.tuning, data.id);
     this.authoredIds = new Set(data.nodes.map((gem) => gem.id));
     this.palette = colonyPalette(data.primaryColor);
-    this.fabric = new FungalFabric(this.palette, this.tuning, releaseAsh);
-    this.network = new FiberNetwork(this.tuning.stretchLength);
-    this.tissue = new ColonyTissue(this.network, this.fabric, this.tuning);
+    this.fabric = new FungalFabric(this.palette, this.tuning, domain, releaseAsh);
     const seed = data.seed ?? defaultColonySeed;
     this.random = seededRandom(seed);
-    this.filaments = new Filaments(
-      seed ^ 6035,
-      this.tuning,
-      domain,
-      this.fabric,
-      this.tissue
-    );
+    this.mycelium = new Mycelium<FungalGem>(this.tuning, this.fabric, domain, seed);
     for (const n of data.nodes) {
       const p = vec2.fromValues(...n.position);
       if (!domain.clear(p, p, this.tuning.gemRadius))
         throw new Error(
           `Colony "${data.id}" gem "${n.id}" overlaps terrain or the level boundary.`
         );
-      const site = this.network.createVertex(p);
+      const site = new Vertex(p);
       this.fusionSites.set(site, this.tuning.fusionArrivals);
       this.attachGem(n.id, site, false);
     }
@@ -98,15 +91,15 @@ export class FungalColony implements Entity {
         b = this.gems.get(to)!.vertex;
       if (!domain.clear(a.position, b.position, this.tuning.mainRadius))
         throw new Error(`Colony "${data.id}" strand "${from}" to "${to}" crosses terrain.`);
-      const trail = this.newTrail(a);
+      const trail = this.mycelium.trail(a);
       const count = Math.max(1, Math.ceil(vec2.distance(a.position, b.position) / 6));
       for (let i = 1; i <= count; i++) {
         const p =
           i === count ? b : vec2.lerp(vec2.create(), a.position, b.position, i / count);
-        this.depositMain(trail, p);
+        this.mycelium.grow(trail, p, this.tick);
       }
     }
-    this.network.refreshDistances();
+    this.mycelium.refreshRoutes();
     if (data.tips) {
       for (const { from, direction } of data.tips) {
         const site = this.gems.get(from)!.vertex;
@@ -123,9 +116,7 @@ export class FungalColony implements Entity {
 
   private attachGem(id: string, site: Vertex, growing: boolean) {
     const gem = new FungalGem(id, site, this, growing);
-    this.gems.set(id, gem);
-    this.network.setGem(site, gem);
-    this.fabric.enclose(site.position, gem.radius);
+    this.mycelium.attach(gem);
   }
 
   private formGem(site: Vertex) {
@@ -137,8 +128,8 @@ export class FungalColony implements Entity {
   }
 
   detachGem(gem: FungalGem) {
-    if (!this.gems.delete(gem.id)) return;
-    this.tissue.removeGem(gem.vertex, this.time);
+    if (gem.vertex.gem !== gem) return;
+    this.mycelium.extract(gem, this.time);
     this.fusionSites.delete(gem.vertex);
     this.pruneGrowth();
     this.detached.add(gem);
@@ -177,14 +168,6 @@ export class FungalColony implements Entity {
 
   playerContact(from: vec2, to: vec2, radius: number) {
     if (!this.gems.size) return null;
-    const { min, max } = this.fabric.bounds;
-    if (
-      Math.min(from[0], to[0]) - radius > max[0] ||
-      Math.max(from[0], to[0]) + radius < min[0] ||
-      Math.min(from[1], to[1]) - radius > max[1] ||
-      Math.max(from[1], to[1]) + radius < min[1]
-    )
-      return null;
     let first: ReturnType<typeof castCapsule> = this.castGem(from, to, radius);
     for (const s of this.fabric.nearby(from, to, radius, true)) {
       const hit = castCapsule(from, to, radius, s.a, s.b, s.radius);
@@ -193,16 +176,9 @@ export class FungalColony implements Entity {
     return first && { ...first, colonyId: this.id };
   }
 
-  private newTrail(vertex: Vertex): MainGrowth {
-    return {
-      vertex,
-      strand: { kind: "main", trailId: Symbol() },
-      buds: this.filaments.newBuds()
-    };
-  }
   private newTip(site: Vertex, angle: number, weight: number, origin = site): Tip {
     return {
-      ...this.newTrail(site),
+      ...this.mycelium.trail(site),
       angle,
       weight,
       credit: 0,
@@ -246,36 +222,6 @@ export class FungalColony implements Entity {
     this.tips.push(tip);
   }
 
-  // A position extends the trail freely. A vertex explicitly joins the two routes.
-  private depositMain(trail: MainGrowth, destination: vec2 | Vertex) {
-    if (destination === trail.vertex) return;
-    const a = trail.vertex.position;
-    const b = destination instanceof Vertex ? destination.position : destination;
-    const length = vec2.distance(a, b);
-    const pieces = Math.max(1, Math.ceil(length / this.tuning.stretchLength));
-    for (let i = 1; i <= pieces; i++) {
-      const start = trail.vertex.position;
-      const end = i === pieces ? b : vec2.lerp(vec2.create(), a, b, i / pieces);
-      const owner =
-        i === pieces && destination instanceof Vertex
-          ? this.network.join(trail.vertex, destination, trail.strand.trailId)
-          : this.network.extend(trail.vertex, end, trail.strand.trailId);
-      trail.vertex = owner.to;
-      const pieceLength = vec2.distance(start, end);
-      if (pieceLength) {
-        this.fabric.deposit(
-          start,
-          end,
-          trail.strand,
-          this.tick,
-          owner,
-          pieceLength / length
-        );
-        this.filaments.budAlong(start, end, pieceLength, trail.buds, owner, this.tick);
-      }
-    }
-  }
-
   private propose(tip: Tip): Proposal | null {
     const { followRadius, attractionRadius, matureTipTicks, growthStep, mainRadius } =
       this.tuning;
@@ -300,11 +246,7 @@ export class FungalColony implements Entity {
       nearest = followRadius;
     const sample = vec2.create();
     for (const s of this.fabric.nearby(position, position, followRadius, false)) {
-      if (
-        this.tick - s.tick < 7 ||
-        (s.strand.kind === "main" && s.strand.trailId === tip.strand.trailId)
-      )
-        continue;
+      if (this.tick - s.tick < 7 || s.trail === tip.id) continue;
       closestPointOnSegment(sample, position, s.a, s.b);
       const d = vec2.distance(position, sample);
       if (d >= nearest || !this.domain.clear(position, sample, 0)) continue;
@@ -360,7 +302,7 @@ export class FungalColony implements Entity {
       const point = tip.vertex;
       // Fixed-length deposits keep branch probability, density and bud spacing per unit
       // of growth. A living, underfed tip can resume if another route supplies it.
-      tip.credit += tip.weight * this.tissue.growthFactor(point.distance, point.health);
+      tip.credit += tip.weight * this.mycelium.growthAt(point);
       if (tip.credit < 1) {
         waiting.push({
           moving: false,
@@ -378,9 +320,8 @@ export class FungalColony implements Entity {
     const used = this.fuse(proposals, waiting, next);
     for (const p of waiting) if (!used.has(p)) next.push(p.tip);
     for (const p of proposals) if (!used.has(p)) this.advanceTip(p, next);
-    this.network.refreshDistances();
     this.tips = next;
-    this.filaments.grow(this.tick);
+    this.mycelium.finishGrowth(this.tick);
   }
 
   private fusionCandidates(proposals: Proposal[], waiting: Proposal[]) {
@@ -421,10 +362,10 @@ export class FungalColony implements Entity {
         )
           continue;
         if (target.moving) {
-          this.depositMain(a.tip, p);
-          this.depositMain(target.tip, a.tip.vertex);
+          this.mycelium.grow(a.tip, p, this.tick);
+          this.mycelium.grow(target.tip, a.tip.vertex, this.tick);
         } else {
-          this.depositMain(a.tip, target.tip.vertex);
+          this.mycelium.grow(a.tip, target.tip.vertex, this.tick);
         }
         const site = a.tip.vertex;
         this.recordFusion(site);
@@ -443,7 +384,7 @@ export class FungalColony implements Entity {
       } else {
         if (!this.domain.clear(a.tip.vertex.position, target.position, mainRadius))
           continue;
-        this.depositMain(a.tip, target);
+        this.mycelium.grow(a.tip, target, this.tick);
         this.recordFusion(target);
       }
       used.add(a);
@@ -461,7 +402,7 @@ export class FungalColony implements Entity {
       gemSpacing
     } = this.tuning;
     const traveled = vec2.distance(tip.vertex.position, p);
-    this.depositMain(tip, p);
+    this.mycelium.grow(tip, p, this.tick);
     tip.angle = angle;
     tip.bend = bend;
     if (tip.launchExit) {
@@ -488,11 +429,9 @@ export class FungalColony implements Entity {
   }
 
   private pruneGrowth() {
-    const vertices = this.network.vertices;
     for (const site of this.fusionSites.keys())
-      if (!vertices.has(site)) this.fusionSites.delete(site);
-    this.tips = this.tips.filter((tip) => vertices.has(tip.vertex));
-    this.filaments.prune();
+      if (!site.alive) this.fusionSites.delete(site);
+    this.tips = this.tips.filter((tip) => tip.vertex.alive);
   }
 
   update(dt: number) {
@@ -505,10 +444,10 @@ export class FungalColony implements Entity {
       const until = Math.min(end, growthAt, tissueAt);
       for (const gem of this.gems.values()) gem.growIn(until - this.time);
       this.time = until;
-      this.tissue.advanceWounds(until);
+      this.mycelium.advanceWounds(until);
       if (until === tissueAt) {
         this.tissueTick++;
-        this.tissue.update(until);
+        this.mycelium.update(until);
         this.pruneGrowth();
       }
       if (until === growthAt) this.grow();
