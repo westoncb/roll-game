@@ -57,7 +57,7 @@ export const playerConfig = {
   jump: {
     tapSpeed: 205,
     fullSpeed: 750,
-    fullChargeSeconds: 0.75,
+    fullChargeSeconds: 0.3,
     chargedSpeedScale: 0.02,
     // Distance from the shell rim to a free ankle at full charge.
     freeLegStub: 5,
@@ -68,14 +68,15 @@ export const playerConfig = {
   },
   gun: {
     aimSpeed: 2.7,
+    aimMemoryDistance: 48,
     extensionSpeed: 900,
     retractSpeed: 1150,
     pullSpeed: 710,
     reelSpeed: 720,
     minPullProgressSpeed: 0.1,
     barrelLength: 45,
+    barrelSpeed: 375,
     headLength: 11,
-    deploySpeed: 160,
     segmentLength: 13
   },
   // Each pair runs from neutral to fully charged.

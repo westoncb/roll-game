@@ -1,4 +1,5 @@
 import { vec2 } from "gl-matrix";
+import { settings } from "../settings";
 import { gameAssets } from "../assets";
 import { nearbyEdges } from "../engine/collision";
 import { fill, stroke } from "../engine/draw-routines";
@@ -165,17 +166,20 @@ export class Player implements Entity {
   private readonly joints = this.ankles.map(
     (ankle) => new Drawable2D(drawAnkleJoint, ankle)
   );
-  private readonly gun = new PlayerGun(this.visual, this.stance, this.body);
-  private readonly shell = new Drawable2D(shellShape, this.stance);
-  private readonly screen = new PlayerScreen(this.shell, this.gun);
+  private readonly gun: PlayerGun;
+  private readonly shell: Drawable2D;
+  private readonly screen: PlayerScreen;
   private displayedCharge?: number;
 
   constructor(
     start: vec2,
     ground: GroundPolygon[],
     private readonly particles: EffectPlayer,
-    private readonly castBeam: CastBeam
+    castBeam: CastBeam
   ) {
+    this.gun = new PlayerGun(this.stance, this.body, castBeam);
+    this.shell = new Drawable2D(shellShape, this.stance);
+    this.screen = new PlayerScreen(this.shell, this.gun);
     vec2.copy(this.visual.position, start);
     this.setChargeColors(0);
     collectContacts(this.body, ground);
@@ -230,21 +234,29 @@ export class Player implements Entity {
   }
 
   control(input: InputState, dt: number) {
+    const down = (arrow: string, key: string) =>
+      Number(input.keysDown.has(arrow) || input.keysDown.has(key));
     vec2.set(
       this.moveInput,
-      Number(input.keysDown.has("ArrowRight")) - Number(input.keysDown.has("ArrowLeft")),
-      Number(input.keysDown.has("ArrowDown")) - Number(input.keysDown.has("ArrowUp"))
+      down("ArrowRight", "KeyD") - down("ArrowLeft", "KeyA"),
+      down("ArrowDown", "KeyS") - down("ArrowUp", "KeyW")
     );
     const previousStride = this.strideScale;
     this.launchCharge = null;
-    for (const change of input.keyChanges) {
-      if (change.code === "KeyF") {
-        if (change.type === "release") this.gun.fire();
-        else if (this.jumpHeldSeconds === null && this.launchCharge === null)
+    const mouseAim = settings.gunAim === "mouse";
+    for (const change of input.changes) {
+      if (change.type === "click") {
+        if (mouseAim) this.gun.pointAt(change.mousePos);
+        this.gun.fire();
+      } else if (change.code === "KeyF") {
+        if (change.type === "press") {
           this.gun.beginAim(
             this.support ? this.pushOffDirection(this.support) : this.lastJumpDirection
           );
-      } else if (change.code === "Space" && this.support && this.gun.phase === "idle") {
+        }
+        if (mouseAim) this.gun.pointAt(change.mousePos);
+        if (change.type === "release") this.gun.endAim(true);
+      } else if (change.code === "Space" && this.support) {
         if (change.type === "press") this.jumpHeldSeconds = 0;
         else if (this.jumpHeldSeconds !== null) {
           this.launchCharge = this.jumpCharge();
@@ -252,13 +264,12 @@ export class Player implements Entity {
         }
       }
     }
-    if (this.gun.phase === "aiming") {
-      // Blur clears held keys without issuing a fire command.
-      if (!input.keysDown.has("KeyF")) this.gun.finish();
-      else {
-        this.gun.aim(this.moveInput[0], dt);
+    if (this.gun.aiming) {
+      if (input.keysDown.has("KeyF")) {
+        if (mouseAim) this.gun.pointAt(input.mousePos);
+        else this.gun.turn(this.moveInput[0], dt);
         vec2.zero(this.moveInput);
-      }
+      } else this.gun.endAim(false); // Focus loss cancels the hold without firing.
     }
     if (!this.support || !input.keysDown.has("Space")) this.jumpHeldSeconds = null;
     else if (this.jumpHeldSeconds !== null) this.jumpHeldSeconds += dt;
@@ -318,7 +329,7 @@ export class Player implements Entity {
       const stride = this.strideScale;
       const targetSpeed = reversing ? 0 : drive * movement.topSpeed * stride;
       const rate =
-        reversing || this.gun.phase === "aiming"
+        reversing || this.gun.aiming
           ? movement.brakeDeceleration
           : drive
             ? movement.runAcceleration
@@ -424,8 +435,8 @@ export class Player implements Entity {
   }
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
-    this.gun.update(this.castBeam, dt);
     this.updateFeet(dt, ground);
+    this.gun.update(dt);
     this.poseAnkles();
     this.updateScreen(dt);
   }
@@ -585,10 +596,7 @@ export class Player implements Entity {
         const offset = settleSpacing(leg.foot, offsets[i], dt);
         const angle = this.shell.rotation + i * legSpacing + offset;
         const rim = tuckedLegLength(angle - this.shell.rotation);
-        const length =
-          this.gun.phase === "aiming"
-            ? rim
-            : lerp(stance.restLength, rim + jump.freeLegStub, charge);
+        const length = lerp(stance.restLength, rim + jump.freeLegStub, charge);
         target = { angle, length, footAngle: angle };
       } else {
         target = plantedPose(stance.center, leg.foot.anchor);

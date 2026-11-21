@@ -1,20 +1,33 @@
-import type { vec2 } from "gl-matrix";
+import { vec2 } from "gl-matrix";
 
 import type { Camera } from "./camera";
 
+type InputChange = ({ type: "press" | "release"; code: string } | { type: "click" }) & {
+  mousePos: vec2 | null;
+};
+
 export type InputState = {
   keysDown: Set<string>;
+  readonly mousePos: vec2 | null;
   /** Transitions since the last fixed tick, including taps between ticks. */
-  keyChanges: { code: string; type: "press" | "release" }[];
-  mousePos: vec2;
+  changes: InputChange[];
 };
 
 export function listenForInput(
   canvas: HTMLCanvasElement,
-  input: InputState,
   camera: Camera,
   capturedKeys: ReadonlySet<string>
-): () => void {
+) {
+  let clientPos: vec2 | null = null;
+  const input: InputState = {
+    keysDown: new Set(),
+    changes: [],
+    get mousePos() {
+      if (!clientPos || camera.zoom <= 0) return null;
+      const bounds = canvas.getBoundingClientRect();
+      return camera.screenToWorld([clientPos[0] - bounds.left, clientPos[1] - bounds.top]);
+    }
+  };
   const controller = new AbortController();
   const options = { signal: controller.signal };
 
@@ -26,7 +39,7 @@ export function listenForInput(
       event.preventDefault();
       if (event.repeat || input.keysDown.has(event.code)) return;
       input.keysDown.add(event.code);
-      input.keyChanges.push({ code: event.code, type: "press" });
+      input.changes.push({ code: event.code, type: "press", mousePos: input.mousePos });
     },
     options
   );
@@ -34,14 +47,14 @@ export function listenForInput(
     "keyup",
     (event) => {
       if (input.keysDown.delete(event.code)) {
-        input.keyChanges.push({ code: event.code, type: "release" });
+        input.changes.push({ code: event.code, type: "release", mousePos: input.mousePos });
       }
     },
     options
   );
   const releaseKeys = () => {
     input.keysDown.clear();
-    input.keyChanges.length = 0;
+    input.changes.length = 0;
   };
   canvas.addEventListener("blur", releaseKeys, options);
   window.addEventListener("blur", releaseKeys, options);
@@ -52,20 +65,20 @@ export function listenForInput(
     },
     { ...options, passive: false }
   );
+  const trackMouse = (event: MouseEvent) => {
+    clientPos = vec2.fromValues(event.clientX, event.clientY);
+  };
+  window.addEventListener("mousemove", trackMouse, options);
   canvas.addEventListener(
-    "mousemove",
+    "click",
     (event) => {
-      const bounds = canvas.getBoundingClientRect();
-      if (camera.zoom > 0) {
-        input.mousePos = camera.screenToWorld([
-          event.clientX - bounds.left,
-          event.clientY - bounds.top
-        ]);
-      }
+      if (event.button !== 0) return;
+      trackMouse(event);
+      input.changes.push({ type: "click", mousePos: input.mousePos });
     },
     options
   );
 
   if (document.activeElement === document.body) canvas.focus({ preventScroll: true });
-  return () => controller.abort();
+  return { input, stopInput: () => controller.abort() };
 }

@@ -13,38 +13,46 @@ export type BeamHit =
   | { kind: "damageable"; point: vec2 };
 export type CastBeam = (
   from: vec2,
-  to: vec2
-) => BeamHit | { kind: "miss"; point: vec2 } | null;
+  direction: vec2,
+  distance?: number
+) => BeamHit | { kind: "miss" | "clear"; point: vec2 };
 
 const gun = playerConfig.gun;
 const dockedNose: ReadonlyVec2 = [gun.headLength, 0];
 type Shot =
   | { kind: "idle" }
-  | { kind: "aiming"; rightTurn: 1 | -1; time: number }
   | { kind: "extending"; direction: vec2; castFrom: vec2 }
   | { kind: "pulling"; hit: TerrainHit; latchLength: number; lastDistance: number }
   | { kind: "reeling"; gem: FungalGem; grip: vec2; normal: vec2; latchLength: number }
-  | { kind: "retracting"; remaining: number };
+  | { kind: "retracting"; remaining: number; direction: vec2 };
 
 export class PlayerGun {
+  private aim: { rightTurn: number; target: vec2 | null; fired: boolean } | null = null;
+  private lastShot: { angle: number; position: vec2 } | null = null;
   private shot: Shot = { kind: "idle" };
+  private deploying = false;
   private readonly pivot: Drawable2D;
   private readonly muzzle: Drawable2D;
   private readonly tipNode: Drawable2D;
   private readonly tip = vec2.create();
 
   constructor(
-    private readonly root: Drawable2D,
-    stance: Drawable2D,
-    private readonly receiver: PhysicsBody
+    private readonly stance: Drawable2D,
+    private readonly receiver: PhysicsBody,
+    private readonly cast: CastBeam
   ) {
-    this.tipNode = new Drawable2D((ctx) => this.drawGrapple(ctx), root);
+    this.tipNode = new Drawable2D((ctx) => this.drawGrapple(ctx), stance);
     this.pivot = new Drawable2D(undefined, stance);
+    this.pivot.rotation = -Math.PI / 2;
     this.muzzle = new Drawable2D((ctx) => this.drawBarrel(ctx), this.pivot);
+    new Drawable2D((ctx) => this.drawLaserDot(ctx), this.pivot);
   }
 
-  get phase() {
-    return this.shot.kind;
+  get aiming() {
+    return this.aim !== null;
+  }
+  get showingSight() {
+    return this.aiming || this.shot.kind !== "idle" || this.muzzle.position[0] > 0;
   }
   get renderAngle() {
     const matrix = this.pivot.renderWorldMatrix;
@@ -66,23 +74,38 @@ export class PlayerGun {
     return vec2.scale(toAnchor, toAnchor, gun.pullSpeed / distance);
   }
 
-  beginAim(direction: ReadonlyVec2) {
-    if (this.shot.kind !== "idle") return;
-    this.pivot.setOrientation(Math.atan2(direction[1], direction[0]));
-    // Right turns clockwise from an upward or horizontal start, counterclockwise from below.
-    this.shot = { kind: "aiming", rightTurn: direction[1] > 1e-6 ? -1 : 1, time: 0 };
+  beginAim(defaultDirection: ReadonlyVec2) {
+    const angle =
+      this.lastShot?.angle ?? Math.atan2(defaultDirection[1], defaultDirection[0]);
+    this.pivot.setOrientation(angle);
+    this.aim = { rightTurn: Math.sin(angle) > 1e-6 ? -1 : 1, target: null, fired: false };
   }
 
-  aim(horizontalInput: number, dt: number) {
-    const shot = this.shot;
-    if (shot.kind !== "aiming") return;
-    this.pivot.rotation += horizontalInput * shot.rightTurn * gun.aimSpeed * dt;
+  pointAt(target: vec2 | null) {
+    if (!this.aim || !target) return;
+    this.aim.target = target;
+    const mount = this.pivot.localToWorld([0, 0]);
+    const dx = target[0] - mount[0],
+      dy = target[1] - mount[1];
+    if (dx || dy) this.pivot.setOrientation(Math.atan2(dy, dx));
+  }
+
+  turn(horizontal: number, dt: number) {
+    if (!this.aim || !horizontal) return;
+    this.aim.target = null;
+    this.pivot.rotation += horizontal * this.aim.rightTurn * gun.aimSpeed * dt;
+  }
+
+  endAim(fireOnRelease: boolean) {
+    if (fireOnRelease && this.aim && !this.aim.fired) this.fire();
+    this.aim = null;
   }
 
   fire() {
-    if (this.shot.kind !== "aiming") return;
-    // A tap still fires from the end of a deployed barrel.
-    this.muzzle.position[0] = gun.barrelLength;
+    if (!this.aim || this.shot.kind !== "idle") return;
+    this.aim.fired = true;
+    this.lastShot = { angle: this.pivot.rotation, position: vec2.clone(this.receiver.pos) };
+    this.deploying = true;
     this.muzzle.localToWorld(dockedNose, this.tip);
     const mount = this.pivot.localToWorld([0, 0]);
     const direction = vec2.subtract(vec2.create(), this.tip, mount);
@@ -97,55 +120,67 @@ export class PlayerGun {
     this.shot = { kind: "idle" };
   }
 
-  update(cast: CastBeam, dt: number) {
+  update(dt: number) {
+    if (
+      this.lastShot &&
+      vec2.squaredDistance(this.receiver.pos, this.lastShot.position) >=
+        gun.aimMemoryDistance ** 2
+    )
+      this.lastShot = null;
+    if (this.aim?.target) this.pointAt(this.aim.target);
     const shot = this.shot;
-    this.muzzle.position[0] = approach(
+    // Even a point-blank hit completes the outward stroke before the barrel stows.
+    const reach = approach(
       this.muzzle.position[0],
-      shot.kind === "idle" ? 0 : gun.barrelLength,
-      gun.deploySpeed * dt
+      this.aiming || this.deploying || shot.kind !== "idle" ? gun.barrelLength : 0,
+      gun.barrelSpeed * dt
     );
+    this.muzzle.position[0] = reach;
+    if (reach === gun.barrelLength) this.deploying = false;
     const dock = this.muzzle.localToWorld(dockedNose);
     if (shot.kind === "extending") {
-      const travel = gun.extensionSpeed * dt;
-      const end = vec2.scaleAndAdd(vec2.create(), this.tip, shot.direction, travel);
-      // On release this includes the loaded head, even when aimed into nearby terrain.
-      const result = cast(shot.castFrom, end);
-      if (result) {
-        vec2.copy(this.tip, result.point);
-        if (result.kind === "clingable" || result.kind === "gem") {
-          const socket = vec2.scaleAndAdd(
-            vec2.create(),
-            this.tip,
-            result.normal,
-            gun.headLength
-          );
-          const latchLength = vec2.distance(this.muzzle.localToWorld([0, 0]), socket);
-          if (result.kind === "gem") {
-            const grip = result.gem.visual.worldToLocal(result.point);
-            result.gem.reelTo(this.receiver, gun.reelSpeed);
-            this.shot = {
-              kind: "reeling",
-              gem: result.gem,
-              grip,
-              normal: result.normal,
-              latchLength
-            };
-          } else {
-            this.shot = {
-              kind: "pulling",
-              hit: result,
-              latchLength,
-              lastDistance: vec2.distance(this.root.position, this.tip)
-            };
-          }
-        } else this.shot = { kind: "retracting", remaining: vec2.distance(dock, this.tip) };
+      // The first sweep includes the loaded head so a close surface still catches it.
+      const distance = vec2.distance(shot.castFrom, this.tip) + gun.extensionSpeed * dt;
+      const result = this.cast(shot.castFrom, shot.direction, distance);
+      vec2.copy(this.tip, result.point);
+      if (result.kind === "clear") {
+        vec2.copy(shot.castFrom, result.point);
+      } else if (result.kind === "clingable" || result.kind === "gem") {
+        const socket = vec2.scaleAndAdd(
+          vec2.create(),
+          this.tip,
+          result.normal,
+          gun.headLength
+        );
+        const latchLength = vec2.distance(this.muzzle.localToWorld([0, 0]), socket);
+        if (result.kind === "gem") {
+          const grip = result.gem.visual.worldToLocal(result.point);
+          result.gem.reelTo(this.receiver, gun.reelSpeed);
+          this.shot = {
+            kind: "reeling",
+            gem: result.gem,
+            grip,
+            normal: result.normal,
+            latchLength
+          };
+        } else {
+          this.shot = {
+            kind: "pulling",
+            hit: result,
+            latchLength,
+            lastDistance: vec2.distance(this.receiver.pos, this.tip)
+          };
+        }
       } else {
-        vec2.copy(this.tip, end);
-        vec2.copy(shot.castFrom, end);
+        this.shot = {
+          kind: "retracting",
+          remaining: vec2.distance(dock, this.tip),
+          direction: shot.direction
+        };
       }
     } else if (shot.kind === "pulling") {
       // Physics can slide the body along an existing contact without reporting a new hit.
-      const distance = vec2.distance(this.root.position, this.tip);
+      const distance = vec2.distance(this.receiver.pos, this.tip);
       if (shot.lastDistance - distance < gun.minPullProgressSpeed * dt) this.finish();
       else shot.lastDistance = distance;
     } else if (shot.kind === "reeling") {
@@ -163,9 +198,26 @@ export class PlayerGun {
       } else vec2.lerp(this.tip, dock, this.tip, shot.remaining / distance);
     } else {
       vec2.copy(this.tip, dock);
-      if (shot.kind === "aiming") shot.time += dt;
     }
-    this.root.worldToLocal(this.tip, this.tipNode.position);
+    this.stance.worldToLocal(this.tip, this.tipNode.position);
+  }
+
+  private drawLaserDot(ctx: CanvasRenderingContext2D) {
+    if (!this.aiming) return;
+    const [dx, dy, , , x, y] = this.pivot.renderWorldMatrix;
+    const hit = this.cast(vec2.fromValues(x, y), vec2.fromValues(dx, dy));
+    if (hit.kind === "clear" || hit.kind === "miss") return;
+    ctx.translate(Math.hypot(hit.point[0] - x, hit.point[1] - y), 0);
+    ctx.fillStyle = "#ff403d";
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(0, 0, 3, 0, tau);
+    ctx.fill();
+    ctx.fillStyle = "#fff2dc";
+    ctx.beginPath();
+    ctx.arc(0, 0, 1.25, 0, tau);
+    ctx.fill();
   }
 
   private drawBarrel(ctx: CanvasRenderingContext2D) {
@@ -182,20 +234,17 @@ export class PlayerGun {
     ctx.fillRect(-4, -5.5, 4, 11);
     ctx.strokeRect(-4, -5.5, 4, 11);
 
-    const shot = this.shot;
-    if (shot.kind === "aiming") drawAimWaves(ctx, shot.time);
-    if (shot.kind === "aiming" || shot.kind === "idle") {
+    if (this.shot.kind === "idle") {
       ctx.translate(gun.headLength, 0);
       drawGrappleHead(ctx, false);
     }
   }
 
   private drawGrapple(ctx: CanvasRenderingContext2D) {
-    if (this.shot.kind === "idle" || this.shot.kind === "aiming") return;
+    if (this.shot.kind === "idle") return;
     // Seat the claws on contact even in the interpolated frame when the cast first hits.
     const shot = this.shot;
     if (shot.kind === "reeling" && !shot.gem.reeling) return;
-    const normal = shot.kind === "reeling" ? shot.normal : this.anchor?.normal;
     const tipPose = this.tipNode.renderWorldMatrix;
     const contact =
       shot.kind === "reeling"
@@ -204,7 +253,14 @@ export class PlayerGun {
     const tipX = contact?.[0] ?? tipPose[4];
     const tipY = contact?.[1] ?? tipPose[5];
     ctx.translate(tipX - tipPose[4], tipY - tipPose[5]);
-    const angle = normal ? Math.atan2(-normal[1], -normal[0]) : this.renderAngle;
+    const direction =
+      shot.kind === "extending" || shot.kind === "retracting"
+        ? shot.direction
+        : vec2.negate(
+            vec2.create(),
+            shot.kind === "pulling" ? shot.hit.normal : shot.normal
+          );
+    const angle = Math.atan2(direction[1], direction[0]);
     const dx = this.muzzle.renderWorldMatrix[4] - tipX;
     const dy = this.muzzle.renderWorldMatrix[5] - tipY;
     const cableX = -gun.headLength * Math.cos(angle) - dx;
@@ -215,7 +271,7 @@ export class PlayerGun {
     this.drawBeam(ctx, Math.hypot(cableX, cableY));
     ctx.restore();
     ctx.rotate(angle);
-    drawGrappleHead(ctx, normal !== undefined);
+    drawGrappleHead(ctx, !!contact);
   }
 
   private drawBeam(ctx: CanvasRenderingContext2D, length: number) {
@@ -271,32 +327,4 @@ function drawGrappleHead(ctx: CanvasRenderingContext2D, latched: boolean) {
   ctx.stroke();
   ctx.fillStyle = "#fff1bf";
   ctx.fillRect(-7.5, -0.9, 5, 1.8);
-}
-
-function drawAimWaves(ctx: CanvasRenderingContext2D, time: number) {
-  ctx.save();
-  ctx.lineCap = "round";
-  ctx.lineWidth = 1.3;
-  ctx.strokeStyle = "#82eff2";
-  const opacity = ctx.globalAlpha;
-  for (let i = 0; i < 2; i++) {
-    const phase = (time * 1.35 + i * 0.5) % 1;
-    const y = 5 + 11 * phase;
-    const ripple = 2.5 * Math.sin(tau * (time * 2 - phase));
-    ctx.globalAlpha = opacity * Math.sin(Math.PI * phase) * 0.8;
-    ctx.beginPath();
-    for (const side of [-1, 1]) {
-      ctx.moveTo(-17, side * y);
-      ctx.bezierCurveTo(
-        -12,
-        side * (y + ripple + 3),
-        -6,
-        side * (y - ripple - 2),
-        0,
-        side * y
-      );
-    }
-    ctx.stroke();
-  }
-  ctx.restore();
 }

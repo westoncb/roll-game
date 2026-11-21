@@ -6,6 +6,10 @@ export const gameKeys: ReadonlySet<string> = new Set([
   "ArrowRight",
   "ArrowUp",
   "ArrowDown",
+  "KeyA",
+  "KeyD",
+  "KeyW",
+  "KeyS",
   "Space",
   "KeyF"
 ]);

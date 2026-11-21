@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { vec2 } from "gl-matrix";
 import { Camera } from "../engine/camera";
 import { gameKeys, updateGame, type GameState } from "../game";
-import { listenForInput, type InputState } from "../engine/input";
+import { listenForInput } from "../engine/input";
 import { loadLevel } from "../level-loader";
 
 export function Game() {
@@ -90,12 +89,7 @@ function startGame(
   viewport?.addEventListener("resize", fitHost);
   viewport?.addEventListener("scroll", fitHost);
 
-  const input: InputState = {
-    keysDown: new Set(),
-    keyChanges: [],
-    mousePos: vec2.create()
-  };
-  const stopInput = listenForInput(canvas, input, camera, gameKeys);
+  const { input, stopInput } = listenForInput(canvas, camera, gameKeys);
   let previousTime: number | undefined;
   let accumulator = 0;
   let frameId: number;
@@ -107,7 +101,7 @@ function startGame(
       const previousContact = game.level.fungalContact;
       updateGame(game, input, stepSeconds);
       if (!previousContact && game.level.fungalContact) onContact();
-      input.keyChanges.length = 0;
+      input.changes.length = 0;
       accumulator -= stepSeconds;
     }
 

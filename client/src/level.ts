@@ -78,11 +78,15 @@ export class Level {
           );
         })
     );
+    const worldDiagonal = vec2.distance(worldMin, worldMax);
     this.player = new Player(
       vec2.fromValues(...data.playerStart),
       this.ground,
       this.particles,
-      (from, to) => {
+      (from, direction, distance) => {
+        // A sight ray spans the entire world, even when the player is outside its bounds.
+        const range = distance ?? vec2.distance(from, worldMin) + worldDiagonal;
+        const to = vec2.scaleAndAdd(vec2.create(), from, direction, range);
         const groundHit = castSegment(from, to, this.ground);
         let first: (BeamHit & { fraction: number }) | null = groundHit
           ? { kind: "clingable", ...groundHit }
@@ -101,7 +105,7 @@ export class Level {
           )
             return { kind: "miss", point: to };
         }
-        return null;
+        return { kind: "clear", point: to };
       }
     );
     this.entities = [...this.fungalColonies, this.player];

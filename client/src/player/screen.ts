@@ -75,14 +75,11 @@ export class PlayerScreen extends Drawable2D {
   }
 
   private displayMode(): ScreenMode {
+    if (this.gun.showingSight) return "sight";
     if (this.charge > 0) return "chargeScope";
-    const phase = this.gun.phase;
-    if (
-      this.time - this.lastAirTime < staticHoldSeconds + staticFadeSeconds &&
-      (phase === "idle" || phase === "pulling")
-    )
+    if (this.time - this.lastAirTime < staticHoldSeconds + staticFadeSeconds)
       return "flightStatic";
-    return phase === "idle" ? "terminal" : "sight";
+    return "terminal";
   }
 
   private drawScreen(ctx: CanvasRenderingContext2D) {

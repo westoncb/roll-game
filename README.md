@@ -13,6 +13,14 @@ Open the local URL printed by Vite (normally `http://127.0.0.1:5173`). Vite hot-
 
 The client loads `levels/test.json` through the level API at startup. Edit that file and reload the page to see the scene. Use relative `/api` URLs from the client. Vite forwards them to the Node server on `127.0.0.1:3001`.
 
+## Controls
+
+Move with WASD or the arrow keys. Hold Space to charge a jump and release to launch. Full charge takes 0.30 seconds.
+
+Hold F to draw the grapple and show its laser dot. By default, the gun immediately aims at the cursor and tracks it while F is held. Release F or left-click while aiming to fire.
+
+To try keyboard aiming, set `gunAim` to `"keyboard"` in `client/src/settings.ts`. Left/Right or A/D turn the gun. Each draw starts at the last shot angle until you move 48 world units from where you fired. After that, the gun points away from the surface underfoot, or along your last jump direction in midair.
+
 ## Level files
 
 Each level lives in `levels/<id>.json` and can be committed to Git. IDs start with a lowercase letter or digit and can contain lowercase letters, digits, underscores, and hyphens, up to 100 characters.
