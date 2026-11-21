@@ -19,6 +19,10 @@ Move with WASD or the arrow keys. Hold Space to charge a jump and release to lau
 
 Hold F to draw the grapple and show its laser dot. By default, the gun immediately aims at the cursor and tracks it while F is held. Release F or left-click while aiming to fire.
 
+In the test arena, you have red feet and the computer rival has turquoise feet. Each gem you reel in scores one point. Whenever a robot touches living fungus, its opponent scores ten points, even on an accidental fall. The fallen robot respawns near its start with brief protection. The round ends when the last gem is collected. The higher score wins, and equal scores draw.
+
+To throw the other robot, hook it, then aim again with F and release toward the fungus. The arrow at the hooked robot shows its launch direction. A tether lasts 2.5 seconds and breaks if either robot gets behind terrain. Both robots can move and use their grapple while hooked.
+
 To try keyboard aiming, set `gunAim` to `"keyboard"` in `client/src/settings.ts`. Left/Right or A/D turn the gun. Each draw starts at the last shot angle until you move 48 world units from where you fired. After that, the gun points away from the surface underfoot, or along your last jump direction in midair.
 
 ## Level files
@@ -26,6 +30,8 @@ To try keyboard aiming, set `gunAim` to `"keyboard"` in `client/src/settings.ts`
 Each level lives in `levels/<id>.json` and can be committed to Git. IDs start with a lowercase letter or digit and can contain lowercase letters, digits, underscores, and hyphens, up to 100 characters.
 
 The game reads `playerStart` as an `[x, y]` pair in world units (positive Y points down). Each entry in `ground` has a `vertices` array tracing a simple polygon in either winding order. The last vertex connects to the first. The optional `gravityScale` defaults to 1.
+
+Add a `rivalStart` coordinate pair to enable a duel. Levels that omit it use the solo rules.
 
 | Request | Result |
 | --- | --- |

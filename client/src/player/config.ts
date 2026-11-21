@@ -1,5 +1,7 @@
 import { tau } from "../utils/math";
 
+export const knockoutPoints = 10;
+
 // Distances are in world units, angles in radians, and times in seconds.
 export const playerConfig = {
   shell: { size: 39.675, cornerRadius: 2, borderWidth: 1.5 },
@@ -73,6 +75,8 @@ export const playerConfig = {
     retractSpeed: 1150,
     pullSpeed: 710,
     reelSpeed: 720,
+    throwSpeed: 880,
+    tetherSeconds: 2.5,
     minPullProgressSpeed: 0.1,
     barrelLength: 45,
     barrelSpeed: 375,
@@ -91,6 +95,23 @@ export const playerConfig = {
     screenBorder: ["#a1b0ae", "#ffb4a8"]
   }
 } as const;
+
+export type PlayerColors = {
+  [K in keyof typeof playerConfig.colors]: K extends "screenIdleFill"
+    ? string
+    : readonly [string, string];
+};
+
+export const rivalColors: PlayerColors = {
+  shellFill: ["#266774", "#9adbd8"],
+  legFill: ["#438e93", "#adf7ef"],
+  metalBorder: ["#83c6bd", "#effffc"],
+  footFill: ["#33d4c2", "#a9fff3"],
+  footBorder: ["#186d70", "#51b6b0"],
+  screenIdleFill: "#0b2730",
+  screenChargeFill: ["#198a99", "#38bbbe"],
+  screenBorder: ["#99c7ca", "#c7fffb"]
+};
 
 const { shell, leg, foot } = playerConfig;
 export const shellRadius = (shell.size + shell.borderWidth) / Math.SQRT2;

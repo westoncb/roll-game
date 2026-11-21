@@ -41,6 +41,9 @@ export async function loadLevel(id: string, signal: AbortSignal): Promise<Level>
   ) {
     throw new Error(`Level "${id}" has invalid ground polygons.`);
   }
+  const rivalStart = "rivalStart" in data ? data.rivalStart : undefined;
+  if (rivalStart !== undefined && !isPoint(rivalStart))
+    throw new Error(`Level "${id}" needs a coordinate pair for rivalStart.`);
   if (
     !("width" in data) ||
     !isDimension(data.width) ||
@@ -53,6 +56,7 @@ export async function loadLevel(id: string, signal: AbortSignal): Promise<Level>
     width: data.width,
     height: data.height,
     playerStart: data.playerStart,
+    rivalStart,
     ground: data.ground,
     fungalColonies: readColonies("fungalColonies" in data ? data.fungalColonies : undefined)
   });

@@ -31,12 +31,14 @@ import {
 } from "../engine/physics";
 import {
   halfSole,
+  knockoutPoints,
   legSpacing,
   maxLegReach,
   playerConfig,
   restLegLength,
   rollRadius,
-  shellRadius
+  shellRadius,
+  type PlayerColors
 } from "./config";
 import {
   advanceAlongSurface,
@@ -56,7 +58,7 @@ import {
   tau
 } from "../utils/math";
 
-const { leg: legConfig, foot, shell, movement, jump, colors } = playerConfig;
+const { leg: legConfig, foot, shell, movement, jump } = playerConfig;
 const shellShape: StyledShape = {
   shape: {
     kind: "rect",
@@ -139,15 +141,19 @@ function settleSpacing(foot: FreeFoot, target: number, dt: number) {
   return foot.offset;
 }
 
-export class Player implements Entity {
-  readonly legs: Leg[] = Array.from({ length: legConfig.count }, (_, i) => ({
+function restingLeg(i: number): Leg {
+  return {
     angle: i * legSpacing,
     length: restLegLength,
     footAngle: i * legSpacing,
     footScale: foot.foldedScale,
     step: null,
     foot: { kind: "free", offset: 0, angularVelocity: 0 }
-  }));
+  };
+}
+
+export class Player implements Entity {
+  readonly legs = Array.from({ length: legConfig.count }, (_, i) => restingLeg(i));
   support: Support | null = null;
   private readonly moveInput = vec2.create();
   // Signed path direction for Right on a wall; zero uses screen-space steering.
@@ -166,7 +172,14 @@ export class Player implements Entity {
   private readonly joints = this.ankles.map(
     (ankle) => new Drawable2D(drawAnkleJoint, ankle)
   );
-  private readonly gun: PlayerGun;
+  readonly gun: PlayerGun;
+  gems = 0;
+  knockouts = 0;
+  readonly home: vec2;
+  spawnProtection: number | "overgrown" = 0;
+  get score() {
+    return this.gems + knockoutPoints * this.knockouts;
+  }
   private readonly shell: Drawable2D;
   private readonly screen: PlayerScreen;
   private displayedCharge?: number;
@@ -175,11 +188,17 @@ export class Player implements Entity {
     start: vec2,
     ground: GroundPolygon[],
     private readonly particles: EffectPlayer,
-    castBeam: CastBeam
+    castBeam: CastBeam,
+    private readonly colors: PlayerColors = playerConfig.colors
   ) {
-    this.gun = new PlayerGun(this.stance, this.body, castBeam);
+    this.gun = new PlayerGun(this.stance, this.body, castBeam, () => this.gems++);
     this.shell = new Drawable2D(shellShape, this.stance);
     this.screen = new PlayerScreen(this.shell, this.gun);
+    this.placeAt(start, ground);
+    this.home = vec2.clone(this.body.pos);
+  }
+
+  private placeAt(start: vec2, ground: GroundPolygon[]) {
     vec2.copy(this.visual.position, start);
     this.setChargeColors(0);
     collectContacts(this.body, ground);
@@ -187,6 +206,25 @@ export class Player implements Entity {
     this.steerOnLanding();
     this.poseAnkles();
     this.updateScreen(0);
+  }
+
+  respawn(start: vec2, ground: GroundPolygon[]) {
+    this.support = null;
+    this.groundSpeed = this.wallRight = 0;
+    this.jumpHeldSeconds = this.launchCharge = null;
+    this.coastingFromCorner = false;
+    this.landingVelocity = undefined;
+    vec2.zero(this.body.vel);
+    vec2.zero(this.body.accel);
+    vec2.zero(this.moveInput);
+    vec2.set(this.lastJumpDirection, 0, -1);
+    vec2.zero(this.stance.position);
+    vec2.zero(this.shell.position);
+    this.shell.rotation = 0;
+    for (let i = 0; i < this.legs.length; i++) this.legs[i] = restingLeg(i);
+    this.placeAt(start, ground);
+    this.gun.onRespawn();
+    this.visual.snapshotPose();
   }
 
   private poseAnkles() {
@@ -233,7 +271,7 @@ export class Player implements Entity {
     return lerp(1, jump.chargedSpeedScale, this.launchCharge ?? this.jumpCharge());
   }
 
-  control(input: InputState, dt: number) {
+  control(input: InputState, dt: number, aimMode = settings.gunAim) {
     const down = (arrow: string, key: string) =>
       Number(input.keysDown.has(arrow) || input.keysDown.has(key));
     vec2.set(
@@ -243,7 +281,7 @@ export class Player implements Entity {
     );
     const previousStride = this.strideScale;
     this.launchCharge = null;
-    const mouseAim = settings.gunAim === "mouse";
+    const mouseAim = aimMode === "mouse";
     for (const change of input.changes) {
       if (change.type === "click") {
         if (mouseAim) this.gun.pointAt(change.mousePos);
@@ -290,6 +328,7 @@ export class Player implements Entity {
   }
 
   private setChargeColors(charge: number) {
+    const colors = this.colors;
     if (charge === this.displayedCharge) return;
     this.displayedCharge = charge;
     const tint = ([base, full]: readonly [string, string]) =>
@@ -304,6 +343,15 @@ export class Player implements Entity {
       fill: charge > 0 ? tint(colors.screenChargeFill) : colors.screenIdleFill,
       stroke: tint(colors.screenBorder)
     };
+  }
+
+  throwAlong(direction: vec2) {
+    if (this.gun.anchor) this.gun.finish();
+    this.support = null;
+    this.coastingFromCorner = false;
+    this.launchCharge = this.jumpHeldSeconds = null;
+    this.groundSpeed = 0;
+    vec2.scale(this.body.vel, direction, playerConfig.gun.throwSpeed);
   }
 
   move(ground: GroundPolygon[], dt: number) {
@@ -436,7 +484,7 @@ export class Player implements Entity {
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
     this.updateFeet(dt, ground);
-    this.gun.update(dt);
+    this.gun.update(dt, ground);
     this.poseAnkles();
     this.updateScreen(dt);
   }

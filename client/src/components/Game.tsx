@@ -3,12 +3,43 @@ import { Camera } from "../engine/camera";
 import { gameKeys, updateGame, type GameState } from "../game";
 import { listenForInput } from "../engine/input";
 import { loadLevel } from "../level-loader";
+import type { Level } from "../level";
+import { knockoutPoints } from "../player/config";
+
+type Hud = {
+  you: number;
+  rival: number | null;
+  hint: string | null;
+  result: string | null;
+};
+
+function roundSummary({ player, rival, result }: Level) {
+  if (!result) return null;
+  if (!rival) return "Fungal contact";
+  const winner =
+    player.score === rival.score
+      ? "Draw"
+      : player.score > rival.score
+        ? "You win"
+        : "Rival wins";
+  return `${winner} · All gems collected`;
+}
+
+function playHint({ player, rival }: Level) {
+  if (player.gun.tethered)
+    return "Rival hooked · Hold F to aim the throw, release to launch";
+  if (rival?.gun.tethered) return "You’re hooked · Get behind terrain to break the cable";
+  if (player.spawnProtection && rival?.spawnProtection) return "Both robots respawned";
+  if (player.spawnProtection) return "You respawned";
+  if (rival?.spawnProtection) return "Rival respawned";
+  return null;
+}
 
 export function Game() {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState("");
-  const [contact, setContact] = useState(false);
+  const [hud, setHud] = useState<Hud | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -21,7 +52,7 @@ export function Game() {
     loadLevel("test", controller.signal)
       .then((level) => {
         if (!controller.signal.aborted) {
-          stopGame = startGame(host, canvas, { level }, () => setContact(true));
+          stopGame = startGame(host, canvas, { level }, setHud);
         }
       })
       .catch((cause: unknown) => {
@@ -39,17 +70,35 @@ export function Game() {
   ) : (
     <div id="game-host" ref={hostRef}>
       <canvas id="game-canvas" ref={canvasRef} tabIndex={0} aria-label="Game canvas" />
-      {contact && (
+      {hud && hud.rival !== null && (
+        <div className="duel-score" aria-label="Scores">
+          <span className="team-score you">
+            You <b>{hud.you}</b>
+          </span>
+          <span className="team-score rival">
+            Rival <b>{hud.rival}</b>
+          </span>
+          <span className="score-rules">
+            Gem +1 · Opponent falls into fungus +{knockoutPoints}
+          </span>
+        </div>
+      )}
+      {hud?.hint && !hud.result && (
+        <div className="duel-hint" role="status">
+          {hud.hint}
+        </div>
+      )}
+      {hud?.result && (
         <div className="fungal-contact">
-          <span role="status">Fungal contact</span>
+          <span role="status">{hud.result}</span>
           <button
             type="button"
             onClick={() => {
-              setContact(false);
+              setHud(null);
               setAttempt((n) => n + 1);
             }}
           >
-            Restart level
+            {hud.rival === null ? "Restart level" : "Play again"}
           </button>
         </div>
       )}
@@ -63,7 +112,7 @@ function startGame(
   host: HTMLElement,
   canvas: HTMLCanvasElement,
   game: GameState,
-  onContact: () => void
+  onHud: (hud: Hud) => void
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not create a 2D canvas context.");
@@ -90,6 +139,25 @@ function startGame(
   viewport?.addEventListener("scroll", fitHost);
 
   const { input, stopInput } = listenForInput(canvas, camera, gameKeys);
+  const { level } = game;
+  let previousHud: Hud | undefined;
+  const syncHud = () => {
+    const you = level.player.score,
+      rival = level.rival?.score ?? null;
+    const hint = playHint(level);
+    const result = roundSummary(level);
+    if (
+      previousHud &&
+      previousHud.you === you &&
+      previousHud.rival === rival &&
+      previousHud.hint === hint &&
+      previousHud.result === result
+    )
+      return;
+    previousHud = { you, rival, hint, result };
+    onHud(previousHud);
+  };
+  syncHud();
   let previousTime: number | undefined;
   let accumulator = 0;
   let frameId: number;
@@ -98,9 +166,8 @@ function startGame(
     accumulator += Math.min(now - (previousTime ?? now), 50) / 1000;
     previousTime = now;
     while (accumulator >= stepSeconds) {
-      const previousContact = game.level.fungalContact;
       updateGame(game, input, stepSeconds);
-      if (!previousContact && game.level.fungalContact) onContact();
+      syncHud();
       input.changes.length = 0;
       accumulator -= stepSeconds;
     }

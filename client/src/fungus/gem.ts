@@ -53,7 +53,13 @@ function drawGem(ctx: CanvasRenderingContext2D, colors: ColonyPalette) {
 }
 
 type ReturnTrip =
-  | { phase: "reeling"; receiver: PhysicsBody; previousCenter: vec2; speed: number }
+  | {
+      phase: "reeling";
+      receiver: PhysicsBody;
+      previousCenter: vec2;
+      speed: number;
+      collect: () => void;
+    }
   | {
       phase: "collecting";
       receiver: PhysicsBody;
@@ -89,6 +95,12 @@ export class FungalGem implements Entity {
 
   get reeling() {
     return this.trip?.phase === "reeling";
+  }
+
+  receiverRespawned() {
+    // The teleport isn't part of the receiver's swept path to a returning gem.
+    if (this.trip?.phase === "reeling")
+      vec2.copy(this.trip.previousCenter, this.trip.receiver.pos);
   }
 
   readyToLaunch(dt: number) {
@@ -134,13 +146,14 @@ export class FungalGem implements Entity {
     );
   }
 
-  reelTo(receiver: PhysicsBody, speed: number) {
+  reelTo(receiver: PhysicsBody, speed: number, collect: () => void) {
     this.colony.detachGem(this);
     this.trip = {
       phase: "reeling",
       receiver,
       previousCenter: vec2.clone(receiver.pos),
-      speed
+      speed,
+      collect
     };
   }
 
@@ -167,6 +180,7 @@ export class FungalGem implements Entity {
     const hit = this.cast(trip.previousCenter, relativeEnd, trip.receiver.radius);
     vec2.scaleAndAdd(pos, pos, travel, hit?.fraction ?? 1);
     if (hit) {
+      trip.collect();
       if (this.colony.tuning.gemCollectSeconds === 0) {
         this.trip = null;
         return true;

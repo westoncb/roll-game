@@ -1,16 +1,18 @@
 import { vec2, type ReadonlyVec2 } from "gl-matrix";
-import type { TerrainHit } from "../engine/collision";
+import { castSegment, type TerrainHit } from "../engine/collision";
+import type { GroundPolygon } from "../engine/ground";
 import { Drawable2D } from "../engine/drawable";
 import { playerConfig } from "./config";
 import { approach, tau } from "../utils/math";
 import type { PhysicsBody } from "../engine/physics";
 import type { FungalGem } from "../fungus/gem";
+import type { Player } from "./player";
 
 // The level identifies the first target; only a clingable hit supplies a movement anchor.
 export type BeamHit =
   | ({ kind: "clingable" } & TerrainHit)
   | { kind: "gem"; point: vec2; normal: vec2; fraction: number; gem: FungalGem }
-  | { kind: "damageable"; point: vec2 };
+  | { kind: "robot"; point: vec2; fraction: number; target: Player };
 export type CastBeam = (
   from: vec2,
   direction: vec2,
@@ -24,6 +26,7 @@ type Shot =
   | { kind: "extending"; direction: vec2; castFrom: vec2 }
   | { kind: "pulling"; hit: TerrainHit; latchLength: number; lastDistance: number }
   | { kind: "reeling"; gem: FungalGem; grip: vec2; normal: vec2; latchLength: number }
+  | { kind: "tether"; target: Player; remaining: number }
   | { kind: "retracting"; remaining: number; direction: vec2 };
 
 export class PlayerGun {
@@ -39,7 +42,8 @@ export class PlayerGun {
   constructor(
     private readonly stance: Drawable2D,
     private readonly receiver: PhysicsBody,
-    private readonly cast: CastBeam
+    private readonly cast: CastBeam,
+    private readonly collectGem: () => void
   ) {
     this.tipNode = new Drawable2D((ctx) => this.drawGrapple(ctx), stance);
     this.pivot = new Drawable2D(undefined, stance);
@@ -51,6 +55,12 @@ export class PlayerGun {
   get aiming() {
     return this.aim !== null;
   }
+  get ready() {
+    return this.shot.kind === "idle";
+  }
+  get tethered() {
+    return this.shot.kind === "tether" ? this.shot.target : null;
+  }
   get showingSight() {
     return this.aiming || this.shot.kind !== "idle" || this.muzzle.position[0] > 0;
   }
@@ -60,6 +70,22 @@ export class PlayerGun {
   }
   get anchor() {
     return this.shot.kind === "pulling" ? this.shot.hit : null;
+  }
+
+  threatens(target: Player) {
+    if (this.tethered === target) return true;
+    const shot = this.shot;
+    if (shot.kind !== "extending" && !(this.ready && this.aiming)) return false;
+    const from =
+      shot.kind === "extending" ? shot.castFrom : this.pivot.localToWorld([0, 0]);
+    if (vec2.distance(from, target.body.pos) > 480) return false;
+    const angle = this.pivot.rotation;
+    const direction =
+      shot.kind === "extending"
+        ? shot.direction
+        : vec2.fromValues(Math.cos(angle), Math.sin(angle));
+    const first = this.cast(from, direction, 480);
+    return first.kind === "robot" && first.target === target;
   }
 
   pullVelocity(center: vec2, radius: number) {
@@ -84,7 +110,7 @@ export class PlayerGun {
   pointAt(target: vec2 | null) {
     if (!this.aim || !target) return;
     this.aim.target = target;
-    const mount = this.pivot.localToWorld([0, 0]);
+    const mount = this.tethered?.body.pos ?? this.pivot.localToWorld([0, 0]);
     const dx = target[0] - mount[0],
       dy = target[1] - mount[1];
     if (dx || dy) this.pivot.setOrientation(Math.atan2(dy, dx));
@@ -102,7 +128,15 @@ export class PlayerGun {
   }
 
   fire() {
-    if (!this.aim || this.shot.kind !== "idle") return;
+    if (!this.aim) return;
+    if (this.shot.kind === "tether") {
+      const angle = this.pivot.rotation;
+      this.shot.target.throwAlong(vec2.fromValues(Math.cos(angle), Math.sin(angle)));
+      this.aim.fired = true;
+      this.finish();
+      return;
+    }
+    if (!this.ready) return;
     this.aim.fired = true;
     this.lastShot = { angle: this.pivot.rotation, position: vec2.clone(this.receiver.pos) };
     this.deploying = true;
@@ -120,7 +154,19 @@ export class PlayerGun {
     this.shot = { kind: "idle" };
   }
 
-  update(dt: number) {
+  onRespawn() {
+    this.endAim(false);
+    this.lastShot = null;
+    this.deploying = false;
+    this.muzzle.position[0] = 0;
+    this.pivot.setOrientation(-Math.PI / 2);
+    if (this.shot.kind === "reeling") {
+      this.shot.gem.receiverRespawned();
+      this.stance.worldToLocal(this.tip, this.tipNode.position);
+    } else this.finish();
+  }
+
+  update(dt: number, ground: GroundPolygon[]) {
     if (
       this.lastShot &&
       vec2.squaredDistance(this.receiver.pos, this.lastShot.position) >=
@@ -155,7 +201,7 @@ export class PlayerGun {
         const latchLength = vec2.distance(this.muzzle.localToWorld([0, 0]), socket);
         if (result.kind === "gem") {
           const grip = result.gem.visual.worldToLocal(result.point);
-          result.gem.reelTo(this.receiver, gun.reelSpeed);
+          result.gem.reelTo(this.receiver, gun.reelSpeed, this.collectGem);
           this.shot = {
             kind: "reeling",
             gem: result.gem,
@@ -171,6 +217,8 @@ export class PlayerGun {
             lastDistance: vec2.distance(this.receiver.pos, this.tip)
           };
         }
+      } else if (result.kind === "robot") {
+        this.shot = { kind: "tether", target: result.target, remaining: gun.tetherSeconds };
       } else {
         this.shot = {
           kind: "retracting",
@@ -183,6 +231,17 @@ export class PlayerGun {
       const distance = vec2.distance(this.receiver.pos, this.tip);
       if (shot.lastDistance - distance < gun.minPullProgressSpeed * dt) this.finish();
       else shot.lastDistance = distance;
+    } else if (shot.kind === "tether") {
+      shot.remaining -= dt;
+      const body = shot.target.body;
+      const toward = vec2.subtract(vec2.create(), this.receiver.pos, body.pos);
+      vec2.normalize(toward, toward);
+      vec2.scaleAndAdd(this.tip, body.pos, toward, body.radius * 0.8);
+      if (shot.remaining <= 0 || castSegment(this.receiver.pos, body.pos, ground)) {
+        this.finish();
+        // Losing the cable while aiming a throw cancels that release.
+        if (this.aim) this.aim.fired = true;
+      }
     } else if (shot.kind === "reeling") {
       shot.gem.visual.localToWorld(shot.grip, this.tip);
       if (!shot.gem.reeling) this.finish();
@@ -205,6 +264,24 @@ export class PlayerGun {
   private drawLaserDot(ctx: CanvasRenderingContext2D) {
     if (!this.aiming) return;
     const [dx, dy, , , x, y] = this.pivot.renderWorldMatrix;
+    if (this.tethered) {
+      // Mark the launch direction at the other end of the cable.
+      const target = this.tethered.visual.renderWorldMatrix;
+      const ox = target[4] - x,
+        oy = target[5] - y;
+      ctx.translate(ox * dx + oy * dy, oy * dx - ox * dy);
+      const start = this.tethered.body.radius;
+      ctx.strokeStyle = "#ffe195";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(start, 0);
+      ctx.lineTo(start + 60, 0);
+      ctx.lineTo(start + 50, -6);
+      ctx.moveTo(start + 60, 0);
+      ctx.lineTo(start + 50, 6);
+      ctx.stroke();
+      return;
+    }
     const hit = this.cast(vec2.fromValues(x, y), vec2.fromValues(dx, dy));
     if (hit.kind === "clear" || hit.kind === "miss") return;
     ctx.translate(Math.hypot(hit.point[0] - x, hit.point[1] - y), 0);
@@ -254,12 +331,14 @@ export class PlayerGun {
     const tipY = contact?.[1] ?? tipPose[5];
     ctx.translate(tipX - tipPose[4], tipY - tipPose[5]);
     const direction =
-      shot.kind === "extending" || shot.kind === "retracting"
-        ? shot.direction
-        : vec2.negate(
-            vec2.create(),
-            shot.kind === "pulling" ? shot.hit.normal : shot.normal
-          );
+      shot.kind === "tether"
+        ? vec2.subtract(vec2.create(), this.tip, this.receiver.pos)
+        : shot.kind === "extending" || shot.kind === "retracting"
+          ? shot.direction
+          : vec2.negate(
+              vec2.create(),
+              shot.kind === "pulling" ? shot.hit.normal : shot.normal
+            );
     const angle = Math.atan2(direction[1], direction[0]);
     const dx = this.muzzle.renderWorldMatrix[4] - tipX;
     const dy = this.muzzle.renderWorldMatrix[5] - tipY;
@@ -271,7 +350,7 @@ export class PlayerGun {
     this.drawBeam(ctx, Math.hypot(cableX, cableY));
     ctx.restore();
     ctx.rotate(angle);
-    drawGrappleHead(ctx, !!contact);
+    drawGrappleHead(ctx, !!contact || shot.kind === "tether");
   }
 
   private drawBeam(ctx: CanvasRenderingContext2D, length: number) {

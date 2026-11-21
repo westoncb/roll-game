@@ -39,6 +39,11 @@ export class FungalColony implements Entity {
   get gems() {
     return this.mycelium.gems;
   }
+  get hasUncollectedGems() {
+    if (this.gems.size) return true;
+    for (const gem of this.detached) if (gem.reeling) return true;
+    return false;
+  }
   readonly palette: ColonyPalette;
   readonly tuning: Readonly<ColonyTuning>;
   readonly fabric: FungalFabric;
