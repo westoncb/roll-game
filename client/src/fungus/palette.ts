@@ -1,3 +1,9 @@
+/**
+ * Derives the colors for one colony from its authored primary color. The gem facets
+ * use a contrasting base so grapple targets stand out among the strands. Main and
+ * minor fibers have separate health ramps that pass through a bruise color toward ash,
+ * while a diagnostic ramp lets the fabric display gem supply directly.
+ */
 import { defaultPrimaryColor, fiberColorSteps } from "./config";
 
 function luminance(channels: number[]) {

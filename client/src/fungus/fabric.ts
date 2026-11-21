@@ -1,3 +1,9 @@
+/**
+ * Stores the strokes deposited by each stretch and indexes them in tiles for drawing,
+ * density checks, and player contact. A stretch can release all its fibers at once.
+ * They immediately stop occupying growing space and catching the player, but the same
+ * strokes stay visible as ash until they crumble.
+ */
 import { vec2 } from "gl-matrix";
 import { fiberColorSteps, type ColonyTuning } from "./config";
 import type { GrowthDomain } from "./domain";

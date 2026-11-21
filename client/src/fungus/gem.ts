@@ -1,9 +1,15 @@
+/**
+ * Represents a grapple target attached to a vertex that powers the mycelium. A gem
+ * grows into view and periodically earns a new tip launch. Its drawing and hit tests
+ * share the same scaled hexagon, including during growth. A grapple hit detaches it
+ * immediately, then reels it to the player for collection.
+ */
 import { vec2 } from "gl-matrix";
 import { castCapsule, nearestBoundary, sweepCircle } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import type { Entity } from "../engine/entity";
 import { GroundPolygon } from "../engine/ground";
-import { tau } from "../engine/math";
+import { tau } from "../utils/math";
 import type { PhysicsBody } from "../engine/physics";
 import type { FungalColony } from "./colony";
 import type { Vertex } from "./mycelium";

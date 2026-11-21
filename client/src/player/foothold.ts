@@ -9,7 +9,7 @@ import {
   playerConfig,
   rollRadius
 } from "./config";
-import { angleDifference, largestFit } from "../engine/math";
+import { angleDifference, largestFit } from "../utils/math";
 
 const { foot } = playerConfig;
 

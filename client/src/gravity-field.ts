@@ -1,7 +1,7 @@
 import { vec2 } from "gl-matrix";
 import type { GroundPolygon } from "./engine/ground";
 import { sampleGravity } from "./engine/physics";
-import { lerp } from "./engine/math";
+import { lerp } from "./utils/math";
 
 const density = 0.65;
 const opacity = 0.56;

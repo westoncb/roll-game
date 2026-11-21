@@ -1,3 +1,9 @@
+/**
+ * Defines the starting layout and tuning a level can supply for each colony. The
+ * loader checks gem IDs, strand endpoints, tip directions, and tuning ranges before
+ * the simulation starts. Defaults live alongside their units, and older level files
+ * can still use the previous names for gem radius and spacing.
+ */
 import type { Point } from "../level";
 
 export const fiberColorSteps = 16;

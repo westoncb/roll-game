@@ -1,5 +1,11 @@
+/**
+ * Propagates the wound left by gem extraction along surviving stretches. Arrivals are
+ * scheduled by travel time along the graph, so a severed route can interrupt a pulse
+ * in flight. The mycelium samples the accumulated exposure at tissue updates to apply
+ * damage, including when several pulses reach the same stretch.
+ */
 import type { ColonyTuning } from "./config";
-import { MinQueue } from "./min-queue";
+import { MinQueue } from "../utils/min-queue";
 import { Stretch, type Vertex } from "./mycelium";
 
 type Target = Vertex | Stretch;

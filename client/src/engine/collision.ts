@@ -1,6 +1,6 @@
 import { vec2 } from "gl-matrix";
 import type { GroundEdge, GroundPolygon } from "./ground";
-import { closestPointOnSegment } from "./math";
+import { closestPointOnSegment } from "../utils/math";
 
 export type GroundContact = {
   ground: GroundPolygon;

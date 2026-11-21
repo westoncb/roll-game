@@ -50,4 +50,4 @@ export function positiveRange(
   );
 }
 
-export { seededRandom } from "../../engine/math";
+export { seededRandom } from "../../utils/math";

@@ -1,6 +1,13 @@
+/**
+ * Models the living graph of vertices and main-strand stretches. Growth power falls
+ * with path distance to the nearest attached gem, so a fusion can feed a branch
+ * through a shorter route. Each stretch owns its fine fibers and shares its health
+ * with them. Losing the last route to a gem removes the stretch and releases its
+ * geometry to the fabric as ash.
+ */
 import { vec2 } from "gl-matrix";
 import type { ColonyTuning } from "./config";
-import { MinQueue } from "./min-queue";
+import { MinQueue } from "../utils/min-queue";
 import { Fibers, type FungalFabric } from "./fabric";
 import type { GrowthDomain } from "./domain";
 import { Filaments, type Buds } from "./filaments";

@@ -3,7 +3,7 @@ import {
   type DrawRoutine,
   type RoutineSettings
 } from "../../engine/draw-routines";
-import { lerp } from "../../engine/math";
+import { lerp } from "../../utils/math";
 import { boundaryArtwork } from "./boundary";
 import {
   checkFields,

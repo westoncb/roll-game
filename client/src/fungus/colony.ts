@@ -1,8 +1,14 @@
+/**
+ * The level runs one FungalColony entity per authored colony. It launches and steers
+ * main tips, resolves competing fusion proposals before committing growth to the
+ * mycelium, and decides where gems form. It also answers grapple and player-contact
+ * queries and keeps extracted gems moving after they leave the graph.
+ */
 import { vec2 } from "gl-matrix";
 import { castCapsule } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import type { Entity } from "../engine/entity";
-import { closestPointOnSegment, seededRandom, tau } from "../engine/math";
+import { closestPointOnSegment, seededRandom, tau } from "../utils/math";
 import {
   defaultColonySeed,
   resolveColonyTuning,

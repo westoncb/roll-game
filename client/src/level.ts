@@ -6,7 +6,7 @@ import type { Entity } from "./engine/entity";
 import { GravityField } from "./gravity-field";
 import { GroundPolygon } from "./engine/ground";
 import type { InputState } from "./engine/input";
-import { lerp } from "./engine/math";
+import { lerp } from "./utils/math";
 import { ParticleSystem } from "./engine/particles/system";
 import { stepPhysics } from "./engine/physics";
 import { Player } from "./player/player";

@@ -2,7 +2,7 @@ import { vec2, type ReadonlyVec2 } from "gl-matrix";
 import type { TerrainHit } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import { playerConfig } from "./config";
-import { approach, tau } from "../engine/math";
+import { approach, tau } from "../utils/math";
 import type { PhysicsBody } from "../engine/physics";
 import type { FungalGem } from "../fungus/gem";
 

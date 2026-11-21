@@ -1,6 +1,6 @@
 import type { ReadonlyMat2d } from "gl-matrix";
 import { applyMatrix } from "../transform";
-import { lerp, tau } from "../math";
+import { lerp, tau } from "../../utils/math";
 import type { EmitterState, OverLife } from "./emitter";
 import { particlePoseAt } from "./particle";
 

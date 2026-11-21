@@ -1,5 +1,11 @@
+/**
+ * Grows the fine fibers that bud in groups along a main trail. Each filament steers
+ * and can fork on its own, but every fork keeps the original stretch as its owner and
+ * draws growth power from it. A separate seeded random stream lets the colony vary
+ * this fine detail independently of main-tip decisions.
+ */
 import { vec2 } from "gl-matrix";
-import { seededRandom, tau } from "../engine/math";
+import { seededRandom, tau } from "../utils/math";
 import type { ColonyTuning } from "./config";
 import type { GrowthDomain } from "./domain";
 import type { Mycelium, Stretch } from "./mycelium";

@@ -3,7 +3,7 @@ import {
   type DrawRoutine,
   type RoutineSettings
 } from "../../engine/draw-routines";
-import { lerp, tau } from "../../engine/math";
+import { lerp, tau } from "../../utils/math";
 import { checkFields, color, positive, seededRandom } from "./brush-settings";
 
 const tileSize = 384;

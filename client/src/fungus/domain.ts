@@ -1,8 +1,13 @@
+/**
+ * Describes where the colony can grow inside the level rectangle and around its ground
+ * polygons. Tips use the same clearance query to test a proposed step that gems use to
+ * test a stationary site. The radius passed to the query lets a thin fiber fit through
+ * a gap too narrow for a gem.
+ */
 import { vec2 } from "gl-matrix";
 import { nearestBoundary, sweepCircle } from "../engine/collision";
 import type { GroundPolygon } from "../engine/ground";
 
-/** The level rectangle minus its ground polygons, including the width of growing tissue. */
 export class GrowthDomain {
   private readonly obstacles;
   constructor(

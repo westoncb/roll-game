@@ -53,7 +53,7 @@ import {
   largestFit,
   lerp,
   tau
-} from "../engine/math";
+} from "../utils/math";
 
 const { leg: legConfig, foot, shell, movement, jump, colors } = playerConfig;
 const shellShape: StyledShape = {

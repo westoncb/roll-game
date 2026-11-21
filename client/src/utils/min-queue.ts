@@ -1,4 +1,4 @@
-// Gem routes use distance as priority. Wound arrivals use simulation time.
+/** A binary min-heap. take(limit) leaves the next item queued if its priority exceeds the limit. */
 export class MinQueue<T> {
   private readonly entries: { value: T; priority: number }[] = [];
 

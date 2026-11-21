@@ -1,5 +1,5 @@
 import type { DrawRoutine, RoutineSettings } from "../../engine/draw-routines";
-import { lerp, tau } from "../../engine/math";
+import { lerp, tau } from "../../utils/math";
 import { boundaryArtwork, deformFromEdge } from "./boundary";
 import {
   checkFields,
