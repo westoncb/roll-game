@@ -24,7 +24,7 @@ import { PlayerGun, type CastBeam } from "./gun";
 import type { EffectPlayer } from "../engine/particles/system";
 import {
   collectContacts,
-  gravityAt,
+  sampleAirGravity,
   moveAtVelocity,
   stepPhysics,
   PhysicsBody
@@ -509,7 +509,7 @@ export class Player implements Entity {
       this.coastingFromCorner = false;
       vec2.copy(body.vel, pull);
       vec2.zero(body.accel);
-    } else vec2.copy(body.accel, gravityAt(body, ground));
+    } else sampleAirGravity(body.accel, body.pos, body.radius, ground);
     const from = this.support;
     // Sweep along the departure tangent before gravity bends the flight. Applying
     // gravity first would aim the initial sweep straight back into the lip.

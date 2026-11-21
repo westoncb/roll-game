@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { settings } from "../settings";
 import { Camera } from "../engine/camera";
 import { gameKeys, updateGame, type GameState } from "../game";
 import { listenForInput } from "../engine/input";
@@ -171,6 +172,19 @@ export function Game() {
           </button>
         </form>
         <a href="/editor">Level editor</a>
+        <label className="pause-gravity">
+          Airborne gravity
+          <select
+            defaultValue={settings.airGravity}
+            onChange={(event) => {
+              settings.airGravity =
+                event.currentTarget.value === "field" ? "field" : "down";
+            }}
+          >
+            <option value="down">Downward</option>
+            <option value="field">Terrain field</option>
+          </select>
+        </label>
       </dialog>
     </div>
   );

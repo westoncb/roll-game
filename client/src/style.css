@@ -200,6 +200,24 @@ html:has(#game-host) {
   background: #22323d;
 }
 
+.pause-gravity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.pause-gravity select {
+  font: inherit;
+  color: inherit;
+  color-scheme: dark;
+  background: #22323d;
+  border: 1px solid #435962;
+  border-radius: 5px;
+  padding: 4px;
+}
+
 .pause-menu :is(button, a):hover {
   filter: brightness(1.12);
 }

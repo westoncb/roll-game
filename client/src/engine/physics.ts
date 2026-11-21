@@ -1,4 +1,5 @@
 import { vec2 } from "gl-matrix";
+import { settings } from "../settings";
 import {
   circleGroundContact,
   nearestBoundary,
@@ -61,10 +62,14 @@ export function collectContacts(
   }
 }
 
-export function gravityAt(body: PhysicsBody, ground: GroundPolygon[]) {
-  const acceleration = vec2.create();
-  sampleGravity(acceleration, body.pos, body.radius, ground);
-  return acceleration;
+export function sampleAirGravity(
+  acceleration: vec2,
+  pos: vec2,
+  radius: number,
+  ground: GroundPolygon[]
+) {
+  if (settings.airGravity === "field") sampleGravity(acceleration, pos, radius, ground);
+  else vec2.set(acceleration, 0, 650);
 }
 
 /** Write the net acceleration and return the signed distance to the closest terrain. */
