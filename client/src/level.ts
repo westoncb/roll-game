@@ -9,13 +9,14 @@ import type { InputState } from "./engine/input";
 import { lerp, tau } from "./utils/math";
 import { ParticleSystem } from "./engine/particles/system";
 import { stepPhysics } from "./engine/physics";
-import { Player } from "./player/player";
+import { Player, type PlayerEvents } from "./player/player";
 import type { BeamHit, CastBeam } from "./player/gun";
 import { rivalColors } from "./player/config";
 import { RivalController } from "./player/rival";
 import { FungalColony } from "./fungus/colony";
 import type { ColonyData } from "./fungus/config";
 import { GrowthDomain } from "./fungus/domain";
+import { PointsPopup } from "./points-popup";
 
 export type Point = [number, number];
 export type GroundData = { vertices: Point[]; gravityScale?: number; style?: string };
@@ -30,9 +31,16 @@ export type LevelData = {
 
 export type RoundResult = "player-contact" | "cleared";
 const respawnGraceSeconds = 1.5;
+const respawnDelaySeconds = 2;
+
+function inPlay(entity: Entity) {
+  return !(entity instanceof Player && entity.respawnRemaining > 0);
+}
 
 export class Level {
   readonly particles = new ParticleSystem();
+  private readonly points = new Set<PointsPopup>();
+  shake = 0;
   readonly size: Readonly<{ width: number; height: number }>;
   readonly player: Player;
   readonly rival?: Player;
@@ -103,7 +111,7 @@ export class Level {
             first = { kind: "gem", ...gem };
         }
         const target = opponent();
-        if (target && !target.spawnProtection) {
+        if (target && !target.respawnRemaining && !target.spawnProtection) {
           const { pos, radius } = target.body;
           const hit = castCapsule(from, to, 0, pos, pos, radius);
           if (hit && (!first || hit.fraction < first.fraction))
@@ -120,11 +128,28 @@ export class Level {
         }
         return { kind: "clear", point: to };
       };
+    const events: PlayerEvents = {
+      scored: (player, points, at) => {
+        const color = player === this.player ? "#ffaaa7" : "#82eddf";
+        this.points.add(new PointsPopup(points, color, at, this.time, this.size));
+      },
+      punched: (at, direction, damage) => {
+        this.impact(at, direction, damage / 45);
+      },
+      defeated: (victim, attacker) => {
+        this.impact(victim.body.pos, victim.body.vel, 1);
+        attacker?.award("knockout", victim.body.pos);
+        victim.punchedBy = null;
+        if (this.rival) victim.respawnRemaining = respawnDelaySeconds;
+        else this.result = "player-contact";
+      }
+    };
     this.player = new Player(
       vec2.fromValues(...data.playerStart),
       this.ground,
       this.particles,
-      castFor(() => this.rival)
+      castFor(() => this.rival),
+      events
     );
     this.entities = [...this.fungalColonies, this.player];
     if (data.rivalStart) {
@@ -134,6 +159,7 @@ export class Level {
         this.ground,
         this.particles,
         cast,
+        events,
         rivalColors
       );
       this.rivalController = new RivalController(
@@ -153,32 +179,51 @@ export class Level {
     );
   }
 
-  private stopAtContact(actor: Player, from: vec2, dt: number) {
-    const { pos, vel, radius } = actor.body;
+  private impact(position: vec2, direction: vec2, strength: number) {
+    this.shake = Math.max(this.shake, 6 * strength);
+    this.particles.play(
+      gameAssets.particles.get("impact-sparks"),
+      { kind: "world", position, angle: Math.atan2(direction[1], direction[0]) },
+      { strength }
+    );
+  }
+
+  private resolveContact(actor: Player, from: vec2, dt: number) {
+    if (!actor.health) return;
+    const { pos, radius } = actor.body;
     if (actor.spawnProtection) {
       // Only a robot that had to spawn inside fungus waits for a clear position.
       if (actor.spawnProtection === "overgrown") {
         if (!this.fungalColonies.some((c) => c.playerContact(pos, pos, radius)))
           actor.spawnProtection = respawnGraceSeconds;
       } else actor.spawnProtection = Math.max(0, actor.spawnProtection - dt);
-      return false;
+      return;
     }
-    let fraction = Infinity;
+    // Merge the exposed parts of this tick so overlapping colonies drain at one rate.
+    const intervals: { start: number; end: number }[] = [];
     for (const colony of this.fungalColonies) {
       const hit = colony.playerContact(from, pos, radius);
-      if (hit) fraction = Math.min(fraction, hit.fraction);
+      if (!hit) continue;
+      const exit = vec2.exactEquals(from, pos)
+        ? hit
+        : colony.playerContact(pos, from, radius);
+      if (exit) intervals.push({ start: hit.fraction, end: 1 - exit.fraction });
     }
-    if (!Number.isFinite(fraction)) return false;
-    vec2.lerp(pos, from, pos, fraction);
-    vec2.zero(vel);
-    return true;
+    let covered = 0,
+      end = 0;
+    for (const interval of intervals.sort((a, b) => a.start - b.start)) {
+      covered += Math.max(0, interval.end - Math.max(interval.start, end));
+      end = Math.max(end, interval.end);
+    }
+    actor.exposeToFungus(covered * dt, end === 1);
   }
 
   private spawnPosition(actor: Player, opponent: Player) {
     const radius = actor.body.radius;
     const safe = (p: vec2) =>
       this.domain.clear(p, p, radius - 0.01) &&
-      vec2.distance(p, opponent.body.pos) > radius + opponent.body.radius &&
+      (opponent.respawnRemaining > 0 ||
+        vec2.distance(p, opponent.body.pos) > radius + opponent.body.radius) &&
       !this.fungalColonies.some((c) => c.playerContact(p, p, radius + 12));
     const home = actor.home;
     // Prefer home, then the nearest clear ring around it as the colony spreads.
@@ -198,12 +243,11 @@ export class Level {
     return home;
   }
 
-  private respawn(actor: Player, opponent: Player) {
-    opponent.knockouts++;
-    if (opponent.gun.tethered === actor) {
-      opponent.gun.endAim(false);
-      opponent.gun.finish();
-    }
+  private advanceRespawn(actor: Player, opponent: Player, dt: number) {
+    if (!actor.respawnRemaining) return;
+    actor.respawnRemaining -= dt;
+    if (actor.respawnRemaining > 1e-6) return;
+    actor.respawnRemaining = 0;
     actor.respawn(this.spawnPosition(actor, opponent), this.ground);
     const { pos, radius } = actor.body;
     actor.spawnProtection = this.fungalColonies.some((c) =>
@@ -215,11 +259,26 @@ export class Level {
   }
 
   update(input: InputState, dt: number) {
-    if (this.result && this.rival) return;
+    this.previousTime = this.time;
+    this.time += dt;
+    this.shake = Math.max(0, this.shake - 25 * dt);
+    for (const popup of this.points) {
+      if (popup.expiresAt <= this.previousTime) this.points.delete(popup);
+    }
+    if (this.result && this.rival) {
+      this.particles.step(dt);
+      return;
+    }
+    if (this.rival) {
+      this.advanceRespawn(this.player, this.rival, dt);
+      this.advanceRespawn(this.rival, this.player, dt);
+    }
     vec2.copy(this.playerFrom, this.player.body.pos);
     if (this.rival) vec2.copy(this.rivalFrom, this.rival.body.pos);
     // A solo level keeps growing around the player's final contact pose.
-    const active: Entity[] = this.result ? this.fungalColonies : this.entities;
+    const active: Entity[] = this.result
+      ? this.fungalColonies
+      : this.entities.filter(inPlay);
     for (const entity of this.entities) entity.visual.snapshotPose();
     for (const entity of active) {
       entity.update?.(dt);
@@ -231,14 +290,13 @@ export class Level {
       else if (entity.body) stepPhysics(entity.body, this.ground, dt);
     }
     if (!this.result) {
-      const playerHit = this.stopAtContact(this.player, this.playerFrom, dt);
-      if (this.rival) {
-        const rivalHit = this.stopAtContact(this.rival, this.rivalFrom, dt);
-        if (playerHit) this.respawn(this.player, this.rival);
-        if (rivalHit) this.respawn(this.rival, this.player);
-      } else if (playerHit) this.result = "player-contact";
+      this.resolveContact(this.player, this.playerFrom, dt);
+      if (this.rival) this.resolveContact(this.rival, this.rivalFrom, dt);
     }
-    for (const entity of active) entity.afterPhysics?.(dt, this.ground);
+    for (const entity of active) {
+      if (!(entity instanceof Player && !entity.health))
+        entity.afterPhysics?.(dt, this.ground);
+    }
     if (
       !this.result &&
       this.rival &&
@@ -247,8 +305,6 @@ export class Level {
     )
       this.result = "cleared";
     this.particles.step(dt);
-    this.previousTime = this.time;
-    this.time += dt;
   }
 
   draw(ctx: CanvasRenderingContext2D, alpha = 1) {
@@ -258,7 +314,10 @@ export class Level {
     this.gravityField.draw(ctx, time);
     this.groundVisual.render(ctx, alpha, time);
     this.particles.draw(ctx, "behind", alpha);
-    for (const entity of this.entities) entity.visual.paintSampled(ctx, time);
+    for (const entity of this.entities) {
+      if (inPlay(entity)) entity.visual.paintSampled(ctx, time);
+    }
     this.particles.draw(ctx, "front", alpha);
+    for (const popup of this.points) popup.visual.render(ctx, alpha, time);
   }
 }

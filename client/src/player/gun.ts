@@ -1,10 +1,8 @@
 import { vec2, type ReadonlyVec2 } from "gl-matrix";
-import { castSegment, type TerrainHit } from "../engine/collision";
-import type { GroundPolygon } from "../engine/ground";
+import type { TerrainHit } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import { playerConfig } from "./config";
 import { approach, tau } from "../utils/math";
-import type { PhysicsBody } from "../engine/physics";
 import type { FungalGem } from "../fungus/gem";
 import type { Player } from "./player";
 
@@ -20,14 +18,14 @@ export type CastBeam = (
 ) => BeamHit | { kind: "miss" | "clear"; point: vec2 };
 
 const gun = playerConfig.gun;
-const dockedNose: ReadonlyVec2 = [gun.headLength, 0];
+type Head = "claw" | "glove";
+const nose: Record<Head, ReadonlyVec2> = { claw: [gun.headLength, 0], glove: [24, 0] };
 type Shot =
   | { kind: "idle" }
-  | { kind: "extending"; direction: vec2; castFrom: vec2 }
+  | { kind: "extending"; head: Head; direction: vec2; origin: vec2; castFrom: vec2 }
   | { kind: "pulling"; hit: TerrainHit; latchLength: number; lastDistance: number }
   | { kind: "reeling"; gem: FungalGem; grip: vec2; normal: vec2; latchLength: number }
-  | { kind: "tether"; target: Player; remaining: number }
-  | { kind: "retracting"; remaining: number; direction: vec2 };
+  | { kind: "retracting"; head: Head; remaining: number; direction: vec2 };
 
 export class PlayerGun {
   private aim: { rightTurn: number; target: vec2 | null; fired: boolean } | null = null;
@@ -41,15 +39,14 @@ export class PlayerGun {
 
   constructor(
     private readonly stance: Drawable2D,
-    private readonly receiver: PhysicsBody,
-    private readonly cast: CastBeam,
-    private readonly collectGem: () => void
+    private readonly owner: Player,
+    private readonly cast: CastBeam
   ) {
     this.tipNode = new Drawable2D((ctx) => this.drawGrapple(ctx), stance);
     this.pivot = new Drawable2D(undefined, stance);
     this.pivot.rotation = -Math.PI / 2;
     this.muzzle = new Drawable2D((ctx) => this.drawBarrel(ctx), this.pivot);
-    new Drawable2D((ctx) => this.drawLaserDot(ctx), this.pivot);
+    new Drawable2D((ctx) => this.drawSight(ctx), this.pivot);
   }
 
   get aiming() {
@@ -57,9 +54,6 @@ export class PlayerGun {
   }
   get ready() {
     return this.shot.kind === "idle";
-  }
-  get tethered() {
-    return this.shot.kind === "tether" ? this.shot.target : null;
   }
   get showingSight() {
     return this.aiming || this.shot.kind !== "idle" || this.muzzle.position[0] > 0;
@@ -73,17 +67,16 @@ export class PlayerGun {
   }
 
   threatens(target: Player) {
-    if (this.tethered === target) return true;
+    if (this.owner.respawnRemaining) return false;
     const shot = this.shot;
-    if (shot.kind !== "extending" && !(this.ready && this.aiming)) return false;
-    const from =
-      shot.kind === "extending" ? shot.castFrom : this.pivot.localToWorld([0, 0]);
+    const incoming = shot.kind === "extending" && shot.head === "glove";
+    if (!incoming && !(this.ready && this.aiming)) return false;
+    const from = incoming ? shot.castFrom : this.pivot.localToWorld([0, 0]);
     if (vec2.distance(from, target.body.pos) > 480) return false;
     const angle = this.pivot.rotation;
-    const direction =
-      shot.kind === "extending"
-        ? shot.direction
-        : vec2.fromValues(Math.cos(angle), Math.sin(angle));
+    const direction = incoming
+      ? shot.direction
+      : vec2.fromValues(Math.cos(angle), Math.sin(angle));
     const first = this.cast(from, direction, 480);
     return first.kind === "robot" && first.target === target;
   }
@@ -110,7 +103,7 @@ export class PlayerGun {
   pointAt(target: vec2 | null) {
     if (!this.aim || !target) return;
     this.aim.target = target;
-    const mount = this.tethered?.body.pos ?? this.pivot.localToWorld([0, 0]);
+    const mount = this.pivot.localToWorld([0, 0]);
     const dx = target[0] - mount[0],
       dy = target[1] - mount[1];
     if (dx || dy) this.pivot.setOrientation(Math.atan2(dy, dx));
@@ -128,25 +121,24 @@ export class PlayerGun {
   }
 
   fire() {
-    if (!this.aim) return;
-    if (this.shot.kind === "tether") {
-      const angle = this.pivot.rotation;
-      this.shot.target.throwAlong(vec2.fromValues(Math.cos(angle), Math.sin(angle)));
-      this.aim.fired = true;
-      this.finish();
-      return;
-    }
-    if (!this.ready) return;
+    if (!this.aim || !this.ready) return;
     this.aim.fired = true;
-    this.lastShot = { angle: this.pivot.rotation, position: vec2.clone(this.receiver.pos) };
+    this.lastShot = {
+      angle: this.pivot.rotation,
+      position: vec2.clone(this.owner.body.pos)
+    };
     this.deploying = true;
-    this.muzzle.localToWorld(dockedNose, this.tip);
     const mount = this.pivot.localToWorld([0, 0]);
-    const direction = vec2.subtract(vec2.create(), this.tip, mount);
+    const angle = this.pivot.rotation;
+    const direction = vec2.fromValues(Math.cos(angle), Math.sin(angle));
+    const head = this.cast(mount, direction).kind === "robot" ? "glove" : "claw";
+    this.muzzle.localToWorld(nose[head], this.tip);
     this.shot = {
       kind: "extending",
-      direction: vec2.normalize(direction, direction),
-      castFrom: mount
+      head,
+      direction,
+      origin: mount,
+      castFrom: vec2.clone(mount)
     };
   }
 
@@ -166,10 +158,10 @@ export class PlayerGun {
     } else this.finish();
   }
 
-  update(dt: number, ground: GroundPolygon[]) {
+  update(dt: number) {
     if (
       this.lastShot &&
-      vec2.squaredDistance(this.receiver.pos, this.lastShot.position) >=
+      vec2.squaredDistance(this.owner.body.pos, this.lastShot.position) >=
         gun.aimMemoryDistance ** 2
     )
       this.lastShot = null;
@@ -183,7 +175,9 @@ export class PlayerGun {
     );
     this.muzzle.position[0] = reach;
     if (reach === gun.barrelLength) this.deploying = false;
-    const dock = this.muzzle.localToWorld(dockedNose);
+    const head =
+      shot.kind === "extending" || shot.kind === "retracting" ? shot.head : "claw";
+    const dock = this.muzzle.localToWorld(nose[head]);
     if (shot.kind === "extending") {
       // The first sweep includes the loaded head so a close surface still catches it.
       const distance = vec2.distance(shot.castFrom, this.tip) + gun.extensionSpeed * dt;
@@ -191,7 +185,10 @@ export class PlayerGun {
       vec2.copy(this.tip, result.point);
       if (result.kind === "clear") {
         vec2.copy(shot.castFrom, result.point);
-      } else if (result.kind === "clingable" || result.kind === "gem") {
+      } else if (
+        shot.head === "claw" &&
+        (result.kind === "clingable" || result.kind === "gem")
+      ) {
         const socket = vec2.scaleAndAdd(
           vec2.create(),
           this.tip,
@@ -201,7 +198,7 @@ export class PlayerGun {
         const latchLength = vec2.distance(this.muzzle.localToWorld([0, 0]), socket);
         if (result.kind === "gem") {
           const grip = result.gem.visual.worldToLocal(result.point);
-          result.gem.reelTo(this.receiver, gun.reelSpeed, this.collectGem);
+          result.gem.reelTo(this.owner, gun.reelSpeed);
           this.shot = {
             kind: "reeling",
             gem: result.gem,
@@ -214,34 +211,29 @@ export class PlayerGun {
             kind: "pulling",
             hit: result,
             latchLength,
-            lastDistance: vec2.distance(this.receiver.pos, this.tip)
+            lastDistance: vec2.distance(this.owner.body.pos, this.tip)
           };
         }
-      } else if (result.kind === "robot") {
-        this.shot = { kind: "tether", target: result.target, remaining: gun.tetherSeconds };
       } else {
+        if (shot.head === "glove" && result.kind === "robot")
+          result.target.takePunch(
+            this.owner,
+            shot.direction,
+            result.point,
+            vec2.distance(shot.origin, result.point)
+          );
         this.shot = {
           kind: "retracting",
+          head: shot.head,
           remaining: vec2.distance(dock, this.tip),
           direction: shot.direction
         };
       }
     } else if (shot.kind === "pulling") {
       // Physics can slide the body along an existing contact without reporting a new hit.
-      const distance = vec2.distance(this.receiver.pos, this.tip);
+      const distance = vec2.distance(this.owner.body.pos, this.tip);
       if (shot.lastDistance - distance < gun.minPullProgressSpeed * dt) this.finish();
       else shot.lastDistance = distance;
-    } else if (shot.kind === "tether") {
-      shot.remaining -= dt;
-      const body = shot.target.body;
-      const toward = vec2.subtract(vec2.create(), this.receiver.pos, body.pos);
-      vec2.normalize(toward, toward);
-      vec2.scaleAndAdd(this.tip, body.pos, toward, body.radius * 0.8);
-      if (shot.remaining <= 0 || castSegment(this.receiver.pos, body.pos, ground)) {
-        this.finish();
-        // Losing the cable while aiming a throw cancels that release.
-        if (this.aim) this.aim.fired = true;
-      }
     } else if (shot.kind === "reeling") {
       shot.gem.visual.localToWorld(shot.grip, this.tip);
       if (!shot.gem.reeling) this.finish();
@@ -261,29 +253,21 @@ export class PlayerGun {
     this.stance.worldToLocal(this.tip, this.tipNode.position);
   }
 
-  private drawLaserDot(ctx: CanvasRenderingContext2D) {
-    if (!this.aiming) return;
+  private drawSight(ctx: CanvasRenderingContext2D) {
     const [dx, dy, , , x, y] = this.pivot.renderWorldMatrix;
-    if (this.tethered) {
-      // Mark the launch direction at the other end of the cable.
-      const target = this.tethered.visual.renderWorldMatrix;
-      const ox = target[4] - x,
-        oy = target[5] - y;
-      ctx.translate(ox * dx + oy * dy, oy * dx - ox * dy);
-      const start = this.tethered.body.radius;
-      ctx.strokeStyle = "#ffe195";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(start, 0);
-      ctx.lineTo(start + 60, 0);
-      ctx.lineTo(start + 50, -6);
-      ctx.moveTo(start + 60, 0);
-      ctx.lineTo(start + 50, 6);
-      ctx.stroke();
-      return;
+    const hit = this.aiming
+      ? this.cast(vec2.fromValues(x, y), vec2.fromValues(dx, dy))
+      : null;
+    const reach = this.muzzle.renderPosition[0];
+    if (this.ready && reach > 0) {
+      const head = hit?.kind === "robot" ? "glove" : "claw";
+      ctx.save();
+      ctx.translate(reach + nose[head][0], 0);
+      if (head === "glove") drawBoxingGlove(ctx);
+      else drawGrappleHead(ctx, false);
+      ctx.restore();
     }
-    const hit = this.cast(vec2.fromValues(x, y), vec2.fromValues(dx, dy));
-    if (hit.kind === "clear" || hit.kind === "miss") return;
+    if (!hit || hit.kind === "clear" || hit.kind === "miss") return;
     ctx.translate(Math.hypot(hit.point[0] - x, hit.point[1] - y), 0);
     ctx.fillStyle = "#ff403d";
     ctx.shadowColor = ctx.fillStyle;
@@ -310,11 +294,6 @@ export class PlayerGun {
     ctx.fillStyle = "#566973";
     ctx.fillRect(-4, -5.5, 4, 11);
     ctx.strokeRect(-4, -5.5, 4, 11);
-
-    if (this.shot.kind === "idle") {
-      ctx.translate(gun.headLength, 0);
-      drawGrappleHead(ctx, false);
-    }
   }
 
   private drawGrapple(ctx: CanvasRenderingContext2D) {
@@ -330,27 +309,24 @@ export class PlayerGun {
     const tipX = contact?.[0] ?? tipPose[4];
     const tipY = contact?.[1] ?? tipPose[5];
     ctx.translate(tipX - tipPose[4], tipY - tipPose[5]);
-    const direction =
-      shot.kind === "tether"
-        ? vec2.subtract(vec2.create(), this.tip, this.receiver.pos)
-        : shot.kind === "extending" || shot.kind === "retracting"
-          ? shot.direction
-          : vec2.negate(
-              vec2.create(),
-              shot.kind === "pulling" ? shot.hit.normal : shot.normal
-            );
+    const flying = shot.kind === "extending" || shot.kind === "retracting";
+    const head = flying ? shot.head : "claw";
+    const direction = flying
+      ? shot.direction
+      : vec2.negate(vec2.create(), shot.kind === "pulling" ? shot.hit.normal : shot.normal);
     const angle = Math.atan2(direction[1], direction[0]);
     const dx = this.muzzle.renderWorldMatrix[4] - tipX;
     const dy = this.muzzle.renderWorldMatrix[5] - tipY;
-    const cableX = -gun.headLength * Math.cos(angle) - dx;
-    const cableY = -gun.headLength * Math.sin(angle) - dy;
+    const cableX = -nose[head][0] * Math.cos(angle) - dx;
+    const cableY = -nose[head][0] * Math.sin(angle) - dy;
     ctx.save();
     ctx.translate(dx, dy);
     ctx.rotate(Math.atan2(cableY, cableX));
     this.drawBeam(ctx, Math.hypot(cableX, cableY));
     ctx.restore();
     ctx.rotate(angle);
-    drawGrappleHead(ctx, !!contact || shot.kind === "tether");
+    if (head === "glove") drawBoxingGlove(ctx);
+    else drawGrappleHead(ctx, !!contact);
   }
 
   private drawBeam(ctx: CanvasRenderingContext2D, length: number) {
@@ -406,4 +382,34 @@ function drawGrappleHead(ctx: CanvasRenderingContext2D, latched: boolean) {
   ctx.stroke();
   ctx.fillStyle = "#fff1bf";
   ctx.fillRect(-7.5, -0.9, 5, 1.8);
+}
+
+function drawBoxingGlove(ctx: CanvasRenderingContext2D) {
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = "#491c2a";
+  ctx.fillStyle = "#de3f48";
+  ctx.beginPath();
+  ctx.moveTo(-18, -5);
+  ctx.bezierCurveTo(-16, -12, -7, -13, -3, -9);
+  ctx.bezierCurveTo(1, -6, 1, 2, -2, 5);
+  ctx.quadraticCurveTo(-5, 8, -10, 7);
+  ctx.bezierCurveTo(-12, 13, -19, 10, -18, 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-15, 3);
+  ctx.quadraticCurveTo(-10, 1, -10, 7);
+  ctx.stroke();
+  ctx.fillStyle = "#f6e0bb";
+  ctx.beginPath();
+  ctx.roundRect(-24, -6, 7, 13, 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = "#ff9b91";
+  ctx.beginPath();
+  ctx.moveTo(-13, -7);
+  ctx.quadraticCurveTo(-9, -10, -5, -8);
+  ctx.stroke();
 }

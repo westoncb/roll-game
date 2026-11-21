@@ -10,7 +10,7 @@ import { Drawable2D } from "../engine/drawable";
 import type { Entity } from "../engine/entity";
 import { GroundPolygon } from "../engine/ground";
 import { tau } from "../utils/math";
-import type { PhysicsBody } from "../engine/physics";
+import type { Player } from "../player/player";
 import type { FungalColony } from "./colony";
 import type { Vertex } from "./mycelium";
 import type { ColonyPalette } from "./palette";
@@ -55,14 +55,13 @@ function drawGem(ctx: CanvasRenderingContext2D, colors: ColonyPalette) {
 type ReturnTrip =
   | {
       phase: "reeling";
-      receiver: PhysicsBody;
+      receiver: Player;
       previousCenter: vec2;
       speed: number;
-      collect: () => void;
     }
   | {
       phase: "collecting";
-      receiver: PhysicsBody;
+      receiver: Player;
       offset: vec2;
       startScale: number;
       elapsed: number;
@@ -100,7 +99,7 @@ export class FungalGem implements Entity {
   receiverRespawned() {
     // The teleport isn't part of the receiver's swept path to a returning gem.
     if (this.trip?.phase === "reeling")
-      vec2.copy(this.trip.previousCenter, this.trip.receiver.pos);
+      vec2.copy(this.trip.previousCenter, this.trip.receiver.body.pos);
   }
 
   readyToLaunch(dt: number) {
@@ -146,14 +145,13 @@ export class FungalGem implements Entity {
     );
   }
 
-  reelTo(receiver: PhysicsBody, speed: number, collect: () => void) {
+  reelTo(receiver: Player, speed: number) {
     this.colony.detachGem(this);
     this.trip = {
       phase: "reeling",
       receiver,
-      previousCenter: vec2.clone(receiver.pos),
-      speed,
-      collect
+      previousCenter: vec2.clone(receiver.body.pos),
+      speed
     };
   }
 
@@ -164,23 +162,24 @@ export class FungalGem implements Entity {
     if (trip.phase === "collecting") {
       trip.elapsed += dt;
       const t = Math.min(1, trip.elapsed / this.colony.tuning.gemCollectSeconds);
-      vec2.scaleAndAdd(pos, trip.receiver.pos, trip.offset, 1 - 0.3 * t);
+      vec2.scaleAndAdd(pos, trip.receiver.body.pos, trip.offset, 1 - 0.3 * t);
       const scale = trip.startScale * (1 - t * t);
       vec2.set(this.visual.scale, scale, scale);
       this.opacity = 1 - t * t;
       return t === 1;
     }
+    if (trip.receiver.health === 0) return false;
     this.growIn(dt);
-    const center = trip.receiver.pos;
+    const center = trip.receiver.body.pos;
     const travel = vec2.subtract(vec2.create(), center, pos);
     const distance = vec2.length(travel);
     if (distance > 0) vec2.scale(travel, travel, Math.min(1, (trip.speed * dt) / distance));
     // Sweep relative motion so walking or jumping through the returning gem counts too.
     const relativeEnd = vec2.subtract(vec2.create(), center, travel);
-    const hit = this.cast(trip.previousCenter, relativeEnd, trip.receiver.radius);
+    const hit = this.cast(trip.previousCenter, relativeEnd, trip.receiver.body.radius);
     vec2.scaleAndAdd(pos, pos, travel, hit?.fraction ?? 1);
     if (hit) {
-      trip.collect();
+      trip.receiver.award("gem", pos);
       if (this.colony.tuning.gemCollectSeconds === 0) {
         this.trip = null;
         return true;

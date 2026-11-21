@@ -4,18 +4,20 @@ import { gameKeys, updateGame, type GameState } from "../game";
 import { listenForInput } from "../engine/input";
 import { loadLevel } from "../level-loader";
 import type { Level } from "../level";
-import { knockoutPoints } from "../player/config";
+import { knockoutPoints, maxHealth } from "../player/config";
 
 type Hud = {
   you: number;
   rival: number | null;
+  health: number;
+  rivalHealth: number;
   hint: string | null;
   result: string | null;
 };
 
 function roundSummary({ player, rival, result }: Level) {
   if (!result) return null;
-  if (!rival) return "Fungal contact";
+  if (!rival) return "Knocked out by fungus";
   const winner =
     player.score === rival.score
       ? "Draw"
@@ -26,18 +28,55 @@ function roundSummary({ player, rival, result }: Level) {
 }
 
 function playHint({ player, rival }: Level) {
-  if (player.gun.tethered)
-    return "Rival hooked · Hold F to aim the throw, release to launch";
-  if (rival?.gun.tethered) return "You’re hooked · Get behind terrain to break the cable";
+  if (player.respawnRemaining)
+    return `You respawn in ${Math.ceil(player.respawnRemaining)}s`;
+  if (rival?.respawnRemaining)
+    return `Rival respawns in ${Math.ceil(rival.respawnRemaining)}s`;
   if (player.spawnProtection && rival?.spawnProtection) return "Both robots respawned";
   if (player.spawnProtection) return "You respawned";
   if (rival?.spawnProtection) return "Rival respawned";
   return null;
 }
 
+function RobotVitals({
+  team,
+  score,
+  health
+}: {
+  team: "you" | "rival";
+  score: number;
+  health: number;
+}) {
+  const name = team === "you" ? "You" : "Rival";
+  const fill = { transform: `scaleX(${health / maxHealth})` };
+  return (
+    <div className={`team-score ${team}`}>
+      <div className="score-line">
+        <span>{name}</span>
+        <b aria-label={`${name}, ${score} points`}>{score}</b>
+      </div>
+      <div className="health-line">
+        <div
+          className="health-track"
+          role="meter"
+          aria-label={`${name === "You" ? "Your" : "Rival"} health`}
+          aria-valuemin={0}
+          aria-valuemax={maxHealth}
+          aria-valuenow={health}
+        >
+          <span className="health-trail" style={fill} />
+          <span className="health-fill" style={fill} />
+        </div>
+        <span className="health-value">{health} HP</span>
+      </div>
+    </div>
+  );
+}
+
 export function Game() {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pauseMenuRef = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState("");
   const [hud, setHud] = useState<Hud | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -45,14 +84,35 @@ export function Game() {
   useEffect(() => {
     const canvas = canvasRef.current;
     const host = hostRef.current;
-    if (!host || !canvas) return;
+    const menu = pauseMenuRef.current;
+    if (!host || !canvas || !menu) return;
 
     const controller = new AbortController();
-    let stopGame: (() => void) | undefined;
+    let session: ReturnType<typeof startGame> | undefined;
+    const togglePause = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "p" && event.key !== "Escape") return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+      event.preventDefault();
+      if (event.repeat) return;
+      if (menu.open) {
+        menu.close();
+      } else {
+        menu.showModal();
+        session?.pause();
+      }
+    };
+    const resume = () => {
+      if (menu.open) return;
+      session?.resume();
+      canvas.focus({ preventScroll: true });
+    };
+    window.addEventListener("keydown", togglePause, { signal: controller.signal });
+    menu.addEventListener("close", resume, { signal: controller.signal });
     loadLevel("test", controller.signal)
       .then((level) => {
         if (!controller.signal.aborted) {
-          stopGame = startGame(host, canvas, { level }, setHud);
+          session = startGame(host, canvas, { level }, setHud);
+          if (menu.open) session.pause();
         }
       })
       .catch((cause: unknown) => {
@@ -61,26 +121,27 @@ export function Game() {
       });
     return () => {
       controller.abort();
-      stopGame?.();
+      session?.stop();
     };
   }, [attempt]);
 
-  return error ? (
-    <p role="alert">Could not start the game. {error}</p>
-  ) : (
+  return (
     <div id="game-host" ref={hostRef}>
+      {error && (
+        <p className="game-error" role="alert">
+          Could not start the game. {error}
+        </p>
+      )}
       <canvas id="game-canvas" ref={canvasRef} tabIndex={0} aria-label="Game canvas" />
-      {hud && hud.rival !== null && (
-        <div className="duel-score" aria-label="Scores">
-          <span className="team-score you">
-            You <b>{hud.you}</b>
-          </span>
-          <span className="team-score rival">
-            Rival <b>{hud.rival}</b>
-          </span>
-          <span className="score-rules">
-            Gem +1 · Opponent falls into fungus +{knockoutPoints}
-          </span>
+      {hud && (
+        <div className="duel-score" aria-label="Score and health">
+          <RobotVitals team="you" score={hud.you} health={hud.health} />
+          {hud.rival !== null && (
+            <>
+              <RobotVitals team="rival" score={hud.rival} health={hud.rivalHealth} />
+              <span className="score-rules">Gem +1 · Knockout +{knockoutPoints}</span>
+            </>
+          )}
         </div>
       )}
       {hud?.hint && !hud.result && (
@@ -102,6 +163,15 @@ export function Game() {
           </button>
         </div>
       )}
+      <dialog className="pause-menu" ref={pauseMenuRef} aria-labelledby="pause-title">
+        <h1 id="pause-title">Game paused</h1>
+        <form method="dialog">
+          <button type="submit" autoFocus>
+            Resume game
+          </button>
+        </form>
+        <a href="/editor">Level editor</a>
+      </dialog>
     </div>
   );
 }
@@ -118,6 +188,7 @@ function startGame(
   if (!ctx) throw new Error("Could not create a 2D canvas context.");
 
   const camera = new Camera(game.level.size);
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const viewport = window.visualViewport;
   const fitHost = () => {
     if (!viewport) return;
@@ -144,23 +215,27 @@ function startGame(
   const syncHud = () => {
     const you = level.player.score,
       rival = level.rival?.score ?? null;
+    const health = Math.ceil(level.player.health),
+      rivalHealth = Math.ceil(level.rival?.health ?? 0);
     const hint = playHint(level);
     const result = roundSummary(level);
     if (
       previousHud &&
       previousHud.you === you &&
       previousHud.rival === rival &&
+      previousHud.health === health &&
+      previousHud.rivalHealth === rivalHealth &&
       previousHud.hint === hint &&
       previousHud.result === result
     )
       return;
-    previousHud = { you, rival, hint, result };
+    previousHud = { you, rival, health, rivalHealth, hint, result };
     onHud(previousHud);
   };
   syncHud();
   let previousTime: number | undefined;
   let accumulator = 0;
-  let frameId: number;
+  let frameId: number | undefined;
 
   const frame = (now: number) => {
     accumulator += Math.min(now - (previousTime ?? now), 50) / 1000;
@@ -183,18 +258,32 @@ function startGame(
       ctx.fillRect(0, 0, width, height);
       // Account for the whole-pixel rounding of each bitmap dimension.
       ctx.scale(width / camera.width, height / camera.height);
+      camera.shake(reducedMotion.matches ? 0 : level.shake, now / 1000);
       camera.applyTo(ctx);
       game.level.draw(ctx, accumulator / stepSeconds);
     }
     frameId = requestAnimationFrame(frame);
   };
 
-  frameId = requestAnimationFrame(frame);
-  return () => {
-    cancelAnimationFrame(frameId);
-    stopInput();
-    observer.disconnect();
-    viewport?.removeEventListener("resize", fitHost);
-    viewport?.removeEventListener("scroll", fitHost);
+  const resume = () => {
+    if (frameId !== undefined) return;
+    previousTime = undefined;
+    frameId = requestAnimationFrame(frame);
+  };
+  const pause = () => {
+    if (frameId !== undefined) cancelAnimationFrame(frameId);
+    frameId = undefined;
+  };
+  resume();
+  return {
+    pause,
+    resume,
+    stop() {
+      pause();
+      stopInput();
+      observer.disconnect();
+      viewport?.removeEventListener("resize", fitHost);
+      viewport?.removeEventListener("scroll", fitHost);
+    }
   };
 }

@@ -31,10 +31,13 @@ import {
 } from "../engine/physics";
 import {
   halfSole,
+  fungusDamagePerSecond,
   knockoutPoints,
+  maxHealth,
   legSpacing,
   maxLegReach,
   playerConfig,
+  punchDamage,
   restLegLength,
   rollRadius,
   shellRadius,
@@ -72,6 +75,12 @@ const shellShape: StyledShape = {
 };
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.
 const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
+
+export interface PlayerEvents {
+  scored(player: Player, points: number, at: vec2): void;
+  punched(at: vec2, direction: vec2, damage: number): void;
+  defeated(player: Player, attacker: Player | null): void;
+}
 
 type FreeFoot = { kind: "free"; offset: number; angularVelocity: number };
 type FootState =
@@ -175,7 +184,13 @@ export class Player implements Entity {
   readonly gun: PlayerGun;
   gems = 0;
   knockouts = 0;
+  health = maxHealth;
+  inFungus = false;
+  private fungusAttacker: Player | null = null;
+  private hitFlash = 0;
   readonly home: vec2;
+  respawnRemaining = 0;
+  punchedBy: Player | null = null;
   spawnProtection: number | "overgrown" = 0;
   get score() {
     return this.gems + knockoutPoints * this.knockouts;
@@ -189,11 +204,13 @@ export class Player implements Entity {
     ground: GroundPolygon[],
     private readonly particles: EffectPlayer,
     castBeam: CastBeam,
+    private readonly events: PlayerEvents,
     private readonly colors: PlayerColors = playerConfig.colors
   ) {
-    this.gun = new PlayerGun(this.stance, this.body, castBeam, () => this.gems++);
+    this.gun = new PlayerGun(this.stance, this, castBeam);
     this.shell = new Drawable2D(shellShape, this.stance);
     this.screen = new PlayerScreen(this.shell, this.gun);
+    new Drawable2D((ctx, { time }) => this.drawDamage(ctx, time), this.shell);
     this.placeAt(start, ground);
     this.home = vec2.clone(this.body.pos);
   }
@@ -209,6 +226,11 @@ export class Player implements Entity {
   }
 
   respawn(start: vec2, ground: GroundPolygon[]) {
+    this.health = maxHealth;
+    this.hitFlash = 0;
+    this.inFungus = false;
+    this.fungusAttacker = null;
+    this.punchedBy = null;
     this.support = null;
     this.groundSpeed = this.wallRight = 0;
     this.jumpHeldSeconds = this.launchCharge = null;
@@ -345,13 +367,61 @@ export class Player implements Entity {
     };
   }
 
-  throwAlong(direction: vec2) {
+  award(kind: "gem" | "knockout", at: vec2) {
+    if (kind === "gem") this.gems++;
+    else this.knockouts++;
+    this.events.scored(this, kind === "gem" ? 1 : knockoutPoints, at);
+  }
+
+  private takeDamage(amount: number, attacker: Player | null) {
+    this.health = Math.max(0, this.health - amount);
+    if (this.health < 1e-6) {
+      this.health = 0;
+      this.events.defeated(this, attacker);
+    }
+  }
+
+  exposeToFungus(seconds: number, touchingAtEnd: boolean) {
+    // Keep credit for the same exposure even if the knockback stops inside the colony.
+    if (!this.inFungus) this.fungusAttacker = this.punchedBy;
+    if (seconds > 0) this.takeDamage(fungusDamagePerSecond * seconds, this.fungusAttacker);
+    this.inFungus = touchingAtEnd && this.health > 0;
+    if (!this.inFungus) this.fungusAttacker = null;
+  }
+
+  takePunch(attacker: Player, direction: vec2, at: vec2, distance: number) {
+    if (!this.health || this.spawnProtection) return;
+    this.punchedBy = attacker;
     if (this.gun.anchor) this.gun.finish();
     this.support = null;
     this.coastingFromCorner = false;
     this.launchCharge = this.jumpHeldSeconds = null;
     this.groundSpeed = 0;
-    vec2.scale(this.body.vel, direction, playerConfig.gun.throwSpeed);
+    vec2.scale(this.body.vel, direction, playerConfig.gun.punchSpeed);
+    const damage = punchDamage(distance);
+    this.hitFlash = 1;
+    this.events.punched(at, direction, damage);
+    this.takeDamage(damage, attacker);
+  }
+
+  update(dt: number) {
+    this.hitFlash = Math.max(0, this.hitFlash - dt / 0.15);
+  }
+
+  private drawDamage(ctx: CanvasRenderingContext2D, time: number) {
+    if (!this.inFungus && !this.hitFlash) return;
+    const punch = this.hitFlash > 0;
+    const color = punch ? "#fff3cc" : "#f18edb";
+    const size = shell.size + 2;
+    ctx.beginPath();
+    ctx.roundRect(-size / 2, -size / 2, size, size, shell.cornerRadius + 1);
+    ctx.fillStyle = ctx.strokeStyle = ctx.shadowColor = color;
+    ctx.shadowBlur = punch ? 6 : 9;
+    ctx.globalAlpha *= punch ? this.hitFlash * 0.9 : 0.58 + 0.18 * Math.sin(time * 9);
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.globalAlpha *= punch ? 0.65 : 0.25;
+    ctx.fill();
   }
 
   move(ground: GroundPolygon[], dt: number) {
@@ -376,6 +446,14 @@ export class Player implements Entity {
       const reversing = drive * this.groundSpeed < 0;
       const stride = this.strideScale;
       const targetSpeed = reversing ? 0 : drive * movement.topSpeed * stride;
+      // A landing can carry the punch into a slide. Once the robot stops, jumps,
+      // or its own drive supplies the speed, subsequent contact is its own fall.
+      if (
+        this.launchCharge !== null ||
+        this.groundSpeed === 0 ||
+        (!reversing && Math.abs(this.groundSpeed) <= Math.abs(targetSpeed))
+      )
+        this.punchedBy = null;
       const rate =
         reversing || this.gun.aiming
           ? movement.brakeDeceleration
@@ -427,6 +505,7 @@ export class Player implements Entity {
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;
     if (pull) {
+      this.punchedBy = null;
       this.coastingFromCorner = false;
       vec2.copy(body.vel, pull);
       vec2.zero(body.accel);
@@ -484,7 +563,7 @@ export class Player implements Entity {
 
   afterPhysics(dt: number, ground: GroundPolygon[]) {
     this.updateFeet(dt, ground);
-    this.gun.update(dt, ground);
+    this.gun.update(dt);
     this.poseAnkles();
     this.updateScreen(dt);
   }

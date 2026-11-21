@@ -67,21 +67,28 @@ html:has(#game-host) {
 .duel-score {
   top: 12px;
   left: 12px;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  max-width: calc(100% - 145px);
-  gap: 4px 14px;
-  padding: 6px 12px;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  max-width: calc(100% - 50px);
+  gap: 6px 16px;
+  padding: 8px 12px;
 }
 .team-score {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
+  min-width: 0;
+  width: clamp(78px, 20vw, 112px);
+  max-width: 100%;
   font-weight: 600;
+}
+.score-line,
+.health-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 .team-score b {
   font-variant-numeric: tabular-nums;
+  color: #f1f5f8;
 }
 .team-score.you {
   color: #ffaaaa;
@@ -89,9 +96,46 @@ html:has(#game-host) {
 .team-score.rival {
   color: #7de7db;
 }
+.health-line {
+  margin-top: 2px;
+}
+.health-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  background: #293944;
+  border-radius: 2px;
+}
+.health-trail,
+.health-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+}
+.health-trail {
+  background: #fff4d6;
+  transition: transform 350ms ease-out;
+}
+.health-fill {
+  background: currentColor;
+}
+.health-value {
+  color: #cfdae0;
+  font:
+    600 10px/1.4 system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+}
 .score-rules {
-  font-size: 12px;
+  grid-column: 1 / span 2;
+  font-size: 11px;
   color: #bbcad1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .health-trail {
+    transition: none;
+  }
 }
 .duel-hint {
   bottom: max(16px, env(safe-area-inset-bottom));
@@ -99,4 +143,68 @@ html:has(#game-host) {
   padding: 10px 16px;
   text-align: center;
   text-wrap: balance;
+}
+
+.game-error {
+  position: absolute;
+  color: #ffd7c1;
+}
+
+.pause-menu {
+  box-sizing: border-box;
+  width: min(300px, calc(100% - 32px));
+  padding: 24px;
+  color: #e1e7eb;
+  background: #111d27;
+  border: 1px solid #435962;
+  border-radius: 8px;
+  box-shadow: 0 16px 60px #0008;
+  font:
+    14px/1.4 Inter,
+    system-ui,
+    sans-serif;
+}
+
+.pause-menu::backdrop {
+  background: rgb(5 10 16 / 32%);
+}
+
+.pause-menu h1 {
+  margin: 0 0 20px;
+  font-size: 24px;
+}
+
+.pause-menu button,
+.pause-menu a {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #435962;
+  border-radius: 5px;
+  font: inherit;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.pause-menu button {
+  color: #132b29;
+  background: #a9dfd2;
+}
+
+.pause-menu a {
+  margin-top: 10px;
+  color: inherit;
+  background: #22323d;
+}
+
+.pause-menu :is(button, a):hover {
+  filter: brightness(1.12);
+}
+
+.pause-menu :focus-visible {
+  outline: 2px solid #cbf6ec;
+  outline-offset: 2px;
 }

@@ -32,6 +32,15 @@ export class Camera {
     return this.playfield.height * this.zoom;
   }
 
+  shake(strength: number, time: number) {
+    const amplitude = strength * Math.min(this.zoom, 1);
+    vec2.set(
+      this.view.position,
+      amplitude * Math.sin(91 * time),
+      amplitude * 0.7 * Math.sin(113 * time)
+    );
+  }
+
   worldToScreen(point: ReadonlyVec2) {
     return this.view.localToWorld(point);
   }

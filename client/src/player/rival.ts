@@ -4,16 +4,22 @@ import type { GroundPolygon } from "../engine/ground";
 import type { InputState } from "../engine/input";
 import { sampleGravity } from "../engine/physics";
 import type { FungalColony } from "../fungus/colony";
-import { closestPointOnSegment, tau } from "../utils/math";
-import { playerConfig } from "./config";
+import { approach, tau } from "../utils/math";
+import { playerConfig, punchDamage } from "./config";
 import type { CastBeam } from "./gun";
 import type { Player } from "./player";
-import { surfaceNormal } from "./walking";
+import {
+  advanceAlongSurface,
+  supportFromContact,
+  surfaceNormal,
+  surfacePose,
+  type Support
+} from "./walking";
 
 const { gun } = playerConfig;
 const decisionSeconds = 0.18;
 
-type Aim = { point: vec2; kind: "hook" | "throw" | "gem" | "terrain"; remaining: number };
+type Aim = { point: vec2; kind: "punch" | "gem" | "terrain"; remaining: number };
 
 // The pilot only issues held keys and pointer positions. The shared player controller
 // handles charge, aim, shot travel, surface grip and braking for both competitors.
@@ -49,7 +55,7 @@ export class RivalController {
     }
 
     const aim = this.aim;
-    if (aim?.kind === "hook") aim.point = this.intercept();
+    if (aim?.kind === "punch") aim.point = this.intercept();
     if (aim) aim.remaining -= dt;
     this.jumpTime -= dt;
     const keys = new Set<string>();
@@ -88,67 +94,57 @@ export class RivalController {
   private intercept() {
     const { pos, vel } = this.opponent.body;
     const flight = vec2.distance(this.self.body.pos, pos) / gun.extensionSpeed;
-    return vec2.scaleAndAdd(vec2.create(), pos, vel, Math.min(flight, 0.45));
+    // Lead within the robot's silhouette so the sight still selects the glove.
+    const lead = Math.min(
+      flight,
+      (this.opponent.body.radius * 0.7) / Math.max(1, vec2.length(vel))
+    );
+    return vec2.scaleAndAdd(vec2.create(), pos, vel, lead);
   }
 
   private hazard(from: vec2, to: vec2, radius: number) {
     return this.colonies.some((c) => c.playerContact(from, to, radius));
   }
 
-  // Try direct and lofted throws toward nearby gems and strands. Sweep the opponent's
-  // whole collider until it reaches tissue, hits solid ground, or leaves throw range.
-  private throwTarget(gems: vec2[]) {
+  // Test the one direction available from this firing position, including a slide
+  // along the ground after impact. Both robots use the same forward impulse.
+  private punchTowardFungus(aim: vec2) {
     const { pos, radius } = this.opponent.body;
-    const candidates = gems.filter((p) => vec2.distance(pos, p) < 610);
-    for (const colony of this.colonies) {
-      if (!colony.gems.size) continue;
-      let range = 230;
-      const tissue = vec2.create(),
-        point = vec2.create();
-      for (const fiber of colony.fabric.nearby(pos, pos, range, true)) {
-        closestPointOnSegment(point, pos, fiber.a, fiber.b);
-        const distance = vec2.distance(pos, point);
-        if (distance < range) {
-          range = distance;
-          vec2.copy(tissue, point);
+    const velocity = vec2.subtract(vec2.create(), aim, this.self.body.pos);
+    vec2.normalize(velocity, velocity);
+    vec2.scale(velocity, velocity, gun.punchSpeed);
+    const at = vec2.clone(pos),
+      end = vec2.create(),
+      step = vec2.create(),
+      gravity = vec2.create();
+    const dt = 1 / 30;
+    let support: Support | null = null,
+      speed = 0;
+    for (let i = 0; i < 24; i++) {
+      if (support) {
+        speed = approach(speed, 0, playerConfig.movement.coastDeceleration * dt);
+        if (!speed) break;
+        const next = advanceAlongSurface(support, speed, dt, radius, this.ground);
+        const pose = surfacePose(next.support, radius);
+        vec2.copy(end, pose.pos);
+        speed *= next.retainedSpeed;
+        vec2.set(velocity, -pose.normal[1] * speed, pose.normal[0] * speed);
+        support = next.airTime ? null : next.support;
+      } else {
+        sampleGravity(gravity, at, radius, this.ground);
+        vec2.scaleAndAdd(velocity, velocity, gravity, dt);
+        vec2.scale(step, velocity, dt);
+        const hit = sweepCircle(at, radius, step, this.ground);
+        vec2.scaleAndAdd(end, at, step, hit?.fraction ?? 1);
+        if (hit) {
+          support = supportFromContact(hit, radius);
+          speed = -hit.normal[1] * velocity[0] + hit.normal[0] * velocity[1];
         }
       }
-      if (range < 230 && candidates.every((p) => vec2.distance(p, tissue) > radius / 2))
-        candidates.push(tissue);
+      if (this.hazard(at, end, radius)) return true;
+      vec2.copy(at, end);
     }
-    const nearest = candidates
-      .sort((a, b) => vec2.squaredDistance(pos, a) - vec2.squaredDistance(pos, b))
-      .slice(0, 3);
-    for (const target of nearest) {
-      const heading = Math.atan2(target[1] - pos[1], target[0] - pos[0]);
-      for (const offset of [0, -0.25, 0.25, -0.55, 0.55]) {
-        const angle = heading + offset;
-        const direction = vec2.fromValues(Math.cos(angle), Math.sin(angle));
-        const velocity = vec2.scale(vec2.create(), direction, gun.throwSpeed);
-        const at = vec2.clone(pos),
-          acceleration = vec2.create(),
-          step = vec2.create(),
-          end = vec2.create();
-        const dt = 1 / 24;
-        for (let i = 0; i < 18; i++) {
-          sampleGravity(acceleration, at, radius, this.ground);
-          vec2.scaleAndAdd(velocity, velocity, acceleration, dt);
-          vec2.scale(step, velocity, dt);
-          const impact = sweepCircle(at, radius, step, this.ground);
-          vec2.scaleAndAdd(end, at, step, impact?.fraction ?? 1);
-          if (this.hazard(at, end, radius))
-            return vec2.scaleAndAdd(
-              vec2.create(),
-              pos,
-              direction,
-              vec2.distance(pos, target)
-            );
-          if (impact) break;
-          vec2.copy(at, end);
-        }
-      }
-    }
-    return null;
+    return false;
   }
 
   private decide() {
@@ -157,9 +153,9 @@ export class RivalController {
       Array.from(c.gems.values(), (gem) => gem.visual.position)
     );
     this.walk = null;
-    if (this.self.gun.tethered) {
-      const target = this.throwTarget(gems);
-      if (target) this.aim = { kind: "throw", point: target, remaining: 0.38 };
+    if (this.self.inFungus && this.self.gun.ready && this.cooldown <= 0) {
+      this.reposition(pos, true);
+      if (!this.aim && this.self.support) this.jumpTime = 0.22;
       return;
     }
     const ahead = vec2.scaleAndAdd(vec2.create(), pos, vel, 0.36);
@@ -179,13 +175,16 @@ export class RivalController {
       }
     }
     if (!this.self.gun.ready || this.cooldown > 0) return;
-    const enemyDistance = vec2.distance(pos, this.opponent.body.pos);
+    const aim = this.intercept();
+    const distance = vec2.distance(pos, aim);
     if (
-      enemyDistance < 660 &&
-      this.sight(this.opponent.body.pos).kind === "robot" &&
-      this.throwTarget(gems)
+      distance < 660 &&
+      this.sight(aim).kind === "robot" &&
+      (distance < 230 ||
+        this.opponent.health <= punchDamage(distance - this.opponent.body.radius) ||
+        this.punchTowardFungus(aim))
     ) {
-      this.aim = { kind: "hook", point: this.intercept(), remaining: 0.35 };
+      this.aim = { kind: "punch", point: aim, remaining: 0.35 };
       return;
     }
     gems.sort((a, b) => vec2.squaredDistance(pos, a) - vec2.squaredDistance(pos, b));
@@ -206,7 +205,7 @@ export class RivalController {
 
   // Probe reachable surfaces for a firing position. Favor cover-free sight of
   // the objective, then shorter travel, and reject paths that cross living tissue.
-  private reposition(goal: vec2) {
+  private reposition(goal: vec2, escapingFungus = false) {
     const { pos, radius } = this.self.body;
     let best: { score: number; point: vec2; walk: boolean } | null = null;
     for (let i = 0; i < 24; i++) {
@@ -219,12 +218,15 @@ export class RivalController {
       const distance = vec2.length(travel);
       if (distance < 55) continue;
       const obstruction = sweepCircle(pos, radius - 1, travel, this.ground);
-      if (obstruction || this.hazard(pos, landing, radius + 4)) continue;
+      if (obstruction || this.hazard(escapingFungus ? landing : pos, landing, radius + 4))
+        continue;
       const blocked = castSegment(landing, goal, this.ground);
       const score = vec2.distance(landing, goal) + 0.35 * distance + (blocked ? 380 : 0);
       if (!best || score < best.score) {
         const walk =
-          this.self.support?.edge === hit.ground.edges[hit.edgeIndex] && distance < 230;
+          !escapingFungus &&
+          this.self.support?.edge === hit.ground.edges[hit.edgeIndex] &&
+          distance < 230;
         best = { score, point: walk ? landing : hit.point, walk };
       }
     }

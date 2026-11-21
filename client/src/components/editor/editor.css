@@ -1,22 +1,10 @@
-.editor,
-.open-editor {
+.editor {
   font:
     14px/1.4 Inter,
     system-ui,
     sans-serif;
   color: #e1e7eb;
   color-scheme: dark;
-}
-.open-editor {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  z-index: 1;
-  text-decoration: none;
-  background: #181f25e8;
-  border: 1px solid #48545d;
-  padding: 6px 12px;
-  border-radius: 5px;
 }
 .editor {
   --line: #39444d;
@@ -50,8 +38,7 @@
   color: #bdcbd5;
   text-decoration: none;
 }
-.editor a:hover,
-.open-editor:hover {
+.editor a:hover {
   text-decoration: underline;
 }
 .editor-sidebar {
@@ -95,8 +82,7 @@
   opacity: 0.48;
   cursor: default;
 }
-.editor :focus-visible,
-.open-editor:focus-visible {
+.editor :focus-visible {
   outline: 2px solid #9ad9c9;
   outline-offset: 2px;
 }

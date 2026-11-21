@@ -15,13 +15,17 @@ The client loads `levels/test.json` through the level API at startup. Edit that 
 
 ## Controls
 
+Press P or Esc to pause or resume. Open the level editor from the pause menu.
+
 Move with WASD or the arrow keys. Hold Space to charge a jump and release to launch. Full charge takes 0.30 seconds.
 
 Hold F to draw the grapple and show its laser dot. By default, the gun immediately aims at the cursor and tracks it while F is held. Release F or left-click while aiming to fire.
 
-In the test arena, you have red feet and the computer rival has turquoise feet. Each gem you reel in scores one point. Whenever a robot touches living fungus, its opponent scores ten points, even on an accidental fall. The fallen robot respawns near its start with brief protection. The round ends when the last gem is collected. The higher score wins, and equal scores draw.
+In the test arena, you have red feet and the computer rival has turquoise feet. Line up your opponent with fungus behind them. Firing while the laser is on the opponent launches a boxing glove. On contact it punches them along the shot direction and retracts. The claw still pulls you to terrain and reels in gems.
 
-To throw the other robot, hook it, then aim again with F and release toward the fungus. The arrow at the hooked robot shows its launch direction. A tether lasts 2.5 seconds and breaks if either robot gets behind terrain. Both robots can move and use their grapple while hooked.
+Both robots start with 100 HP. Living fungus drains 36 HP per second until you escape. Glove hits deal 30 damage up close, tapering to 15 at long range.
+
+Each gem scores one point. A knockout earns ten points if your glove lands the finishing hit or knocks your opponent into the fungus that finishes them. Falling into fungus on your own costs only the two-second respawn delay. Robots return near their start with full health and brief protection. When the final gem is reeled in, the higher score wins. Equal scores draw.
 
 To try keyboard aiming, set `gunAim` to `"keyboard"` in `client/src/settings.ts`. Left/Right or A/D turn the gun. Each draw starts at the last shot angle until you move 48 world units from where you fired. After that, the gun points away from the surface underfoot, or along your last jump direction in midair.
 
