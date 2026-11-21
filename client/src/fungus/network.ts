@@ -1,160 +1,152 @@
-import { vec2 } from "gl-matrix";
-import type { ColonyTuning } from "./config";
-import { NutrientSolver } from "./nutrients";
+import type { vec2 } from "gl-matrix";
+import { fiberColorSteps, type ColonyTuning } from "./config";
+import { DistanceQueue } from "./distance-queue";
 
 export type Strand = { kind: "main"; trailId: symbol } | { kind: "minor" };
 
+// Geometry is kept at drawing and collision resolution. All biological state
+// belongs to the stretch of main strand that produced the stroke.
+export type FiberSegment = {
+  a: vec2;
+  b: vec2;
+  length: number;
+  radius: number;
+  strand: Strand;
+  tick: number;
+  densityWeight: number;
+  owner: Stretch;
+};
+
 export class FiberPoint {
-  readonly incident: FiberSegment[] = [];
+  readonly incident = new Set<Stretch>();
   source = false;
-  row = -1; // After a solve, only gem-connected points have rows.
-  constructor(
-    readonly position: vec2,
-    public supply: number
-  ) {}
+  distance = Infinity;
+  constructor(public position: vec2) {}
 }
 
-export class FiberSegment {
+export class Stretch {
+  readonly strokes: FiberSegment[] = [];
   health = 1;
   dead = false;
-  healthBand = 16;
-  supplyBand = 16;
-  widthFraction: number;
-  radius: number;
+  healthBand = fiberColorSteps;
+  supplyBand = fiberColorSteps;
   wound?: { start: number; strength: number; pendingDose: number };
-  readonly conductance: number;
-  readonly demand: number;
+  // Once a wound starts traveling along this stretch its endpoint must stay put.
+  sealed = false;
 
   constructor(
     readonly from: FiberPoint,
     readonly to: FiberPoint,
-    readonly strand: Strand,
-    readonly tick: number,
-    readonly length: number,
-    readonly maxRadius: number,
-    readonly densityWeight: number,
-    tuning: Readonly<ColonyTuning>
-  ) {
-    const main = strand.kind === "main";
-    this.conductance =
-      (tuning.nutrientLength ** 2 * (main ? 1 : tuning.minorConductance)) /
-      Math.max(length, 1e-5);
-    this.demand = length * (main ? 1 : tuning.minorUptake);
-    this.widthFraction =
-      tuning.minWidthFraction + (1 - tuning.minWidthFraction) * this.supply;
-    this.radius = maxRadius * this.widthFraction;
-    this.supplyBand = Math.round(16 * this.supply);
+    readonly trailId: symbol,
+    public length: number
+  ) {}
+
+  other(point: FiberPoint) {
+    return point === this.from ? this.to : this.from;
   }
 
-  get a() {
-    return this.from.position;
-  }
-  get b() {
-    return this.to.position;
-  }
-  get supply() {
-    return (this.from.supply + this.to.supply) / 2;
+  get midpointDistance() {
+    return Math.min(this.from.distance, this.to.distance) + this.length / 2;
   }
 }
 
-// Positions are immutable identities. Independent fibers can occupy the same coordinates.
 export class FiberNetwork {
   readonly points = new Map<vec2, FiberPoint>();
-  readonly segments = new Set<FiberSegment>();
-  private readonly sources = new Set<FiberPoint>();
-  private readonly solver = new NutrientSolver();
-  private connectedPointCount = 0;
+  readonly stretches = new Set<Stretch>();
   private dirty = false;
 
-  constructor(
-    private readonly tuning: Readonly<ColonyTuning>,
-    private readonly changes?: {
-      added(s: FiberSegment): void;
-      removed(s: FiberSegment): void;
-    }
-  ) {}
+  constructor(private readonly tuning: Readonly<ColonyTuning>) {}
 
-  private point(position: vec2, initialSupply: number) {
+  private point(position: vec2) {
     let point = this.points.get(position);
     if (!point) {
-      point = new FiberPoint(position, initialSupply);
+      point = new FiberPoint(position);
       this.points.set(position, point);
     }
     return point;
   }
 
   setSource(position: vec2, attached: boolean) {
-    const p = attached ? this.point(position, 1) : this.points.get(position);
-    if (!p || p.source === attached) return;
-    p.source = attached;
-    if (attached) this.sources.add(p);
-    else {
-      this.sources.delete(p);
-      if (!p.incident.length) this.points.delete(position);
+    const point = attached ? this.point(position) : this.points.get(position);
+    if (!point || point.source === attached) return;
+    point.source = attached;
+    if (attached) point.distance = 0;
+    else if (!point.incident.size) this.points.delete(position);
+    this.dirty = true;
+  }
+
+  // A free tip extends its own route. Only a connection to an existing point
+  // can shorten a route elsewhere. Coordinate equality alone is not a fusion.
+  extend(a: vec2, b: vec2, trailId: symbol, length: number) {
+    const from = this.points.get(a)!;
+    const existing = this.points.get(b);
+    const tail = from.incident.size === 1 ? from.incident.values().next().value : undefined;
+    if (
+      !existing &&
+      !from.source &&
+      tail &&
+      tail.to === from &&
+      tail.trailId === trailId &&
+      !tail.sealed &&
+      tail.length + length <= this.tuning.stretchLength
+    ) {
+      this.points.delete(a);
+      from.position = b;
+      this.points.set(b, from);
+      from.distance += length;
+      tail.length += length;
+      return tail;
     }
-    this.dirty = true;
+
+    const to = existing ?? this.point(b);
+    const stretch = new Stretch(from, to, trailId, length);
+    from.incident.add(stretch);
+    to.incident.add(stretch);
+    this.stretches.add(stretch);
+    if (existing) this.dirty = true;
+    else to.distance = from.distance + length;
+    return stretch;
   }
 
-  connect(a: vec2, b: vec2, strand: Strand, tick: number, densityWeight: number) {
-    const from = this.point(a, this.points.get(b)?.supply ?? 0);
-    const to = this.point(b, from.supply);
-    const radius =
-      strand.kind === "main" ? this.tuning.mainRadius : this.tuning.minorRadius;
-    const segment = new FiberSegment(
-      from,
-      to,
-      strand,
-      tick,
-      vec2.distance(a, b),
-      radius,
-      densityWeight,
-      this.tuning
-    );
-    this.segments.add(segment);
-    from.incident.push(segment);
-    to.incident.push(segment);
-    this.dirty = true;
-    this.changes?.added(segment);
-    return segment;
-  }
-
-  sever(s: FiberSegment) {
-    if (!this.segments.delete(s)) return;
-    s.dead = true;
-    s.health = 0;
-    for (const p of [s.from, s.to]) {
-      p.incident.splice(p.incident.indexOf(s), 1);
-      if (!p.source && !p.incident.length) this.points.delete(p.position);
-    }
-    this.dirty = true;
-    this.changes?.removed(s);
-  }
-
-  solve() {
+  refreshDistances() {
     if (!this.dirty) return;
-    this.connectedPointCount = this.solver.solve(
-      this.points.values(),
-      this.sources,
-      this.tuning.gemOutput
-    );
     this.dirty = false;
+    const queue = new DistanceQueue<FiberPoint>();
+    for (const point of this.points.values()) {
+      point.distance = point.source ? 0 : Infinity;
+      if (point.source) queue.add(point, 0);
+    }
+    for (let next; (next = queue.take()); ) {
+      const { value: point, distance } = next;
+      if (distance !== point.distance) continue;
+      for (const stretch of point.incident) {
+        const neighbor = stretch.other(point);
+        const via = distance + stretch.length;
+        if (via >= neighbor.distance) continue;
+        neighbor.distance = via;
+        queue.add(neighbor, via);
+      }
+    }
   }
 
-  shedDisconnected() {
-    this.solve();
-    if (this.connectedPointCount === this.points.size) return;
-    // Both ends of each edge belong to the same component. Removing whole unsourced
-    // components leaves the solved supply on every surviving point valid.
-    for (const s of this.segments) if (s.from.row < 0) this.sever(s);
-    this.dirty = false;
+  sever(stretch: Stretch) {
+    stretch.dead = true;
+    stretch.health = 0;
+    this.stretches.delete(stretch);
+    for (const point of [stretch.from, stretch.to]) {
+      point.incident.delete(stretch);
+      if (!point.source && !point.incident.size) this.points.delete(point.position);
+    }
+    // Removing an already unreachable edge cannot change a surviving route.
+    if (Number.isFinite(stretch.from.distance)) this.dirty = true;
   }
 
-  growthFactor(p: FiberPoint) {
+  supply(distance: number) {
+    return Math.exp(-distance / this.tuning.nutrientLength);
+  }
+
+  growthFactor(distance: number, health: number) {
     const maintenance = this.tuning.maintenanceSupply;
-    const available = Math.max(0, (p.supply - maintenance) / (1 - maintenance));
-    if (p.source) return available;
-    let health = 0;
-    for (const s of p.incident) health = Math.max(health, s.health);
-    return available * health;
+    return health * Math.max(0, (this.supply(distance) - maintenance) / (1 - maintenance));
   }
 }

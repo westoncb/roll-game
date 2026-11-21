@@ -1,10 +1,11 @@
 import { vec2 } from "gl-matrix";
-import type { ColonyTuning } from "./config";
-import { FiberNetwork, type FiberSegment, type Strand } from "./network";
+import { fiberColorSteps, type ColonyTuning } from "./config";
+import { FiberNetwork, Stretch, type FiberSegment, type Strand } from "./network";
 import type { ColonyPalette } from "./palette";
 
 const tileSize = 48;
-const maxSegmentLength = 8;
+const tileScale = 2;
+type Damage = { left: number; top: number; right: number; bottom: number };
 type Tile = {
   x: number;
   y: number;
@@ -13,11 +14,48 @@ type Tile = {
   main: Set<FiberSegment>;
   mainDensity: number;
   minorDensity: number;
-  dirty: boolean;
+  damage?: Damage;
 };
+
+function tileSurface() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = tileSize * tileScale;
+  const ctx = canvas.getContext("2d")!;
+  ctx.lineCap = "round";
+  return ctx;
+}
 
 function tileKey(x: number, y: number) {
   return x + "," + y;
+}
+
+// Snap damage outwards and include the antialias fringe of both old and new strokes.
+// Coordinates stay in world space, including on tiles whose origin is nonzero.
+function invalidate(tile: Tile, s: FiberSegment) {
+  const x = tile.x * tileSize,
+    y = tile.y * tileSize;
+  const pad = s.radius + 1;
+  const left = Math.max(x, Math.floor(Math.min(s.a[0], s.b[0]) - pad));
+  const top = Math.max(y, Math.floor(Math.min(s.a[1], s.b[1]) - pad));
+  const right = Math.min(x + tileSize, Math.ceil(Math.max(s.a[0], s.b[0]) + pad));
+  const bottom = Math.min(y + tileSize, Math.ceil(Math.max(s.a[1], s.b[1]) + pad));
+  const d = tile.damage;
+  if (d) {
+    d.left = Math.min(d.left, left);
+    d.top = Math.min(d.top, top);
+    d.right = Math.max(d.right, right);
+    d.bottom = Math.max(d.bottom, bottom);
+  } else tile.damage = { left, top, right, bottom };
+}
+
+function overlapsDamage(s: FiberSegment, d: Damage) {
+  const pad = s.radius + 1;
+  return (
+    Math.min(s.a[0], s.b[0]) - pad < d.right &&
+    Math.max(s.a[0], s.b[0]) + pad > d.left &&
+    Math.min(s.a[1], s.b[1]) - pad < d.bottom &&
+    Math.max(s.a[1], s.b[1]) + pad > d.top
+  );
 }
 
 function stroke(
@@ -60,9 +98,10 @@ export class FungalFabric {
     min: vec2.fromValues(Infinity, Infinity),
     max: vec2.fromValues(-Infinity, -Infinity)
   };
+  private patchSurface?: CanvasRenderingContext2D;
   private readonly tiles = new Map<string, Tile>();
-  private readonly wounded = new Set<FiberSegment>();
-  private readonly ash = new Map<FiberSegment, number>();
+  private readonly wounded = new Set<Stretch>();
+  private readonly ash = new Map<Stretch, number>();
   private time = 0;
 
   constructor(
@@ -70,10 +109,7 @@ export class FungalFabric {
     private readonly tuning: Readonly<ColonyTuning>,
     private readonly releaseAsh?: (position: vec2, amount: number) => void
   ) {
-    this.network = new FiberNetwork(tuning, {
-      added: (s) => this.index(s),
-      removed: (s) => this.becomeAsh(s)
-    });
+    this.network = new FiberNetwork(tuning);
   }
 
   enclose(p: vec2, r: number) {
@@ -88,11 +124,15 @@ export class FungalFabric {
     const key = tileKey(x, y);
     let tile = this.tiles.get(key);
     if (!tile) {
-      const canvas = document.createElement("canvas");
-      canvas.width = canvas.height = tileSize * 2;
-      const ctx = canvas.getContext("2d")!;
-      ctx.setTransform(2, 0, 0, 2, -2 * x * tileSize, -2 * y * tileSize);
-      ctx.lineCap = "round";
+      const ctx = tileSurface();
+      ctx.setTransform(
+        tileScale,
+        0,
+        0,
+        tileScale,
+        -tileScale * x * tileSize,
+        -tileScale * y * tileSize
+      );
       tile = {
         x,
         y,
@@ -100,8 +140,7 @@ export class FungalFabric {
         segments: new Set(),
         main: new Set(),
         mainDensity: 0,
-        minorDensity: 0,
-        dirty: false
+        minorDensity: 0
       };
       this.tiles.set(key, tile);
     }
@@ -123,7 +162,7 @@ export class FungalFabric {
 
   private *segmentTiles(s: FiberSegment) {
     // Index the widest possible healthy silhouette. Growth checks this same clearance.
-    const { a, b, maxRadius: r } = s;
+    const { a, b, radius: r } = s;
     for (
       let y = Math.floor((Math.min(a[1], b[1]) - r) / tileSize);
       y <= Math.floor((Math.max(a[1], b[1]) + r) / tileSize);
@@ -138,45 +177,45 @@ export class FungalFabric {
   }
 
   private color(s: FiberSegment) {
-    if (s.dead) return this.palette.ash;
-    if (this.tuning.showNutrientSupply) return this.palette.supply[s.supplyBand];
-    return this.palette.tissue[s.strand.kind][s.healthBand];
+    if (s.owner.dead) return this.palette.ash;
+    if (this.tuning.showNutrientSupply) return this.palette.supply[s.owner.supplyBand];
+    return this.palette.tissue[s.strand.kind][s.owner.healthBand];
   }
 
-  private index(s: FiberSegment) {
-    this.enclose(s.a, s.maxRadius);
-    this.enclose(s.b, s.maxRadius);
+  deposit(
+    a: vec2,
+    b: vec2,
+    strand: Strand,
+    tick: number,
+    owner: Stretch,
+    densityWeight = 1
+  ) {
+    const radius =
+      strand.kind === "main" ? this.tuning.mainRadius : this.tuning.minorRadius;
+    const s: FiberSegment = {
+      a,
+      b,
+      strand,
+      tick,
+      owner,
+      radius,
+      densityWeight,
+      length: vec2.distance(a, b)
+    };
+    owner.strokes.push(s);
+    this.enclose(s.a, s.radius);
+    this.enclose(s.b, s.radius);
     for (const tile of this.segmentTiles(s)) {
       tile.segments.add(s);
       if (s.strand.kind === "main") {
         tile.main.add(s);
         tile.mainDensity += s.densityWeight;
       } else tile.minorDensity += s.densityWeight;
-      if (!tile.dirty && s.length) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
+      if (s.length) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
     }
   }
 
-  deposit(a: vec2, b: vec2, strand: Strand, tick: number, buds?: vec2[]) {
-    if (a === b) return;
-    const length = vec2.distance(a, b);
-    // The ordered samples on this deposit are its actual graph edges. Bud roots are
-    // shared endpoints, and long steps retain a finite spatial resolution for decay.
-    let start = a;
-    for (const stop of buds ? [...buds, b] : [b]) {
-      const from = start;
-      const pieces = Math.max(1, Math.ceil(vec2.distance(from, stop) / maxSegmentLength));
-      for (let i = 1; i <= pieces; i++) {
-        const end = i === pieces ? stop : vec2.lerp(vec2.create(), from, stop, i / pieces);
-        if (start !== end) {
-          const weight = length ? vec2.distance(start, end) / length : 0;
-          this.network.connect(start, end, strand, tick, weight);
-        }
-        start = end;
-      }
-    }
-  }
-
-  expose(s: FiberSegment, start: number, strength: number) {
+  expose(s: Stretch, start: number, strength: number) {
     if (s.dead) return;
     // Combine overlapping wounds, bounded by the strength at an extraction site.
     const old = s.wound;
@@ -194,67 +233,71 @@ export class FungalFabric {
     this.wounded.add(s);
   }
 
-  private becomeAsh(s: FiberSegment) {
-    this.wounded.delete(s);
-    this.ash.set(s, this.time + this.tuning.ashHoldSeconds);
-    for (const tile of this.segmentTiles(s)) {
-      if (s.strand.kind === "main") {
-        tile.main.delete(s);
-        tile.mainDensity = Math.max(0, tile.mainDensity - s.densityWeight);
-      } else tile.minorDensity = Math.max(0, tile.minorDensity - s.densityWeight);
-      tile.dirty = true;
+  private shed(stretch: Stretch) {
+    this.network.sever(stretch);
+    this.wounded.delete(stretch);
+    this.ash.set(stretch, this.time + this.tuning.ashHoldSeconds);
+    for (const s of stretch.strokes) {
+      for (const tile of this.segmentTiles(s)) {
+        if (s.strand.kind === "main") {
+          tile.main.delete(s);
+          tile.mainDensity = Math.max(0, tile.mainDensity - s.densityWeight);
+        } else tile.minorDensity = Math.max(0, tile.minorDensity - s.densityWeight);
+        invalidate(tile, s);
+      }
     }
+  }
+
+  shedDisconnected() {
+    this.network.refreshDistances();
+    for (const stretch of this.network.stretches)
+      if (!Number.isFinite(stretch.from.distance)) this.shed(stretch);
   }
 
   updateTissue(time: number) {
     if (time <= this.time) return;
     const dt = time - this.time;
     this.time = time;
-    this.network.shedDisconnected();
-    const t = this.tuning;
-    const widthBlend = -Math.expm1(-dt / t.widthResponseSeconds);
-    let severed = false;
-    for (const s of this.network.segments) {
-      const supply = s.supply;
-      const balance = supply / t.maintenanceSupply - 1;
-      let change = (dt * balance) / t.starvationSeconds;
-      if (balance < 0) change *= 1 + t.lowSupplyDecayBoost * balance ** 2;
-      if (s.wound) {
-        const age = time - s.wound.start;
-        const dose = woundDose(age, t);
-        change -=
-          s.wound.pendingDose +
-          (dose - woundDose(age - dt, t)) * woundDamage(s.wound.strength, t);
-        s.wound.pendingDose = 0;
-        if (dose >= 1) {
-          s.wound = undefined;
-          this.wounded.delete(s);
-        }
-      }
-      s.health = Math.max(0, Math.min(1, s.health + change));
-      if (s.health === 0) {
-        this.network.sever(s);
-        severed = true;
-        continue;
-      }
-      const width = t.minWidthFraction + (1 - t.minWidthFraction) * supply;
-      s.widthFraction += widthBlend * (width - s.widthFraction);
-      const radius =
-        s.maxRadius * Math.max(t.minWidthFraction, Math.round(s.widthFraction * 32) / 32);
-      const healthBand = Math.round(s.health * 16),
-        supplyBand = Math.round(supply * 16);
-      if (
-        radius !== s.radius ||
-        healthBand !== s.healthBand ||
-        (t.showNutrientSupply && supplyBand !== s.supplyBand)
-      )
-        for (const tile of this.segmentTiles(s)) tile.dirty = true;
-      s.radius = radius;
-      s.healthBand = healthBand;
-      s.supplyBand = supplyBand;
+    const dead: Stretch[] = [];
+    for (const s of this.network.stretches) if (!this.updateStretch(s, dt)) dead.push(s);
+    if (dead.length) {
+      for (const s of dead) this.shed(s);
+      this.shedDisconnected();
     }
-    if (severed) this.network.shedDisconnected();
     this.crumble(time);
+  }
+
+  private updateStretch(s: Stretch, dt: number) {
+    const t = this.tuning;
+    const supply = this.network.supply(s.midpointDistance);
+    const balance = supply / t.maintenanceSupply - 1;
+    let change = (dt * balance) / t.starvationSeconds;
+    if (balance < 0) change *= 1 + t.lowSupplyDecayBoost * balance ** 2;
+    if (s.wound) {
+      const age = this.time - s.wound.start;
+      const dose = woundDose(age, t);
+      change -=
+        s.wound.pendingDose +
+        (dose - woundDose(age - dt, t)) * woundDamage(s.wound.strength, t);
+      s.wound.pendingDose = 0;
+      if (dose >= 1) {
+        s.wound = undefined;
+        this.wounded.delete(s);
+      }
+    }
+    s.health = Math.max(0, Math.min(1, s.health + change));
+    if (s.health === 0) return false;
+    const healthBand = Math.round(s.health * fiberColorSteps),
+      supplyBand = Math.round(supply * fiberColorSteps);
+    if (
+      healthBand !== s.healthBand ||
+      (t.showNutrientSupply && supplyBand !== s.supplyBand)
+    )
+      for (const stroke of s.strokes)
+        for (const tile of this.segmentTiles(stroke)) invalidate(tile, stroke);
+    s.healthBand = healthBand;
+    s.supplyBand = supplyBand;
+    return true;
   }
 
   private crumble(time: number) {
@@ -262,21 +305,23 @@ export class FungalFabric {
     // Batch simultaneous shedding locally, while keeping the flakes on real fiber positions.
     const spacing = this.tuning.ashBurstSpacing;
     const bursts = new Map<string, { position: vec2; amount: number }>();
-    for (const [s, expiry] of this.ash) {
+    for (const [stretch, expiry] of this.ash) {
       if (time < expiry) continue;
-      this.ash.delete(s);
-      for (const tile of this.segmentTiles(s)) {
-        tile.segments.delete(s);
-        tile.dirty = true;
-        if (!tile.segments.size) this.tiles.delete(tileKey(tile.x, tile.y));
+      this.ash.delete(stretch);
+      for (const s of stretch.strokes) {
+        for (const tile of this.segmentTiles(s)) {
+          tile.segments.delete(s);
+          invalidate(tile, s);
+          if (!tile.segments.size) this.tiles.delete(tileKey(tile.x, tile.y));
+        }
+        if (!this.releaseAsh || !s.length) continue;
+        const x = (s.a[0] + s.b[0]) / 2,
+          y = (s.a[1] + s.b[1]) / 2;
+        const key = tileKey(Math.floor(x / spacing), Math.floor(y / spacing));
+        const burst = bursts.get(key);
+        if (burst) burst.amount += s.length;
+        else bursts.set(key, { position: vec2.fromValues(x, y), amount: s.length });
       }
-      if (!this.releaseAsh || !s.length) continue;
-      const x = (s.a[0] + s.b[0]) / 2,
-        y = (s.a[1] + s.b[1]) / 2;
-      const key = tileKey(Math.floor(x / spacing), Math.floor(y / spacing));
-      const burst = bursts.get(key);
-      if (burst) burst.amount += s.length;
-      else bursts.set(key, { position: vec2.fromValues(x, y), amount: s.length });
     }
     for (const { position, amount } of bursts.values())
       this.releaseAsh?.(position, Math.min(1, amount / spacing));
@@ -293,7 +338,7 @@ export class FungalFabric {
         const tile = this.tiles.get(tileKey(x, y));
         if (tile)
           for (const s of includeMinor ? tile.segments : tile.main)
-            if (!s.dead && s.length) result.add(s);
+            if (!s.owner.dead && s.length) result.add(s);
       }
     return result;
   }
@@ -302,11 +347,36 @@ export class FungalFabric {
     for (const tile of this.tiles.values()) {
       const x = tile.x * tileSize,
         y = tile.y * tileSize;
-      if (tile.dirty) {
-        tile.ctx.clearRect(x, y, tileSize, tileSize);
+      const d = tile.damage;
+      if (d) {
+        const width = d.right - d.left,
+          height = d.bottom - d.top;
+        const full = width * height >= (tileSize * tileSize) / 2;
+        // Rasterize intersecting strokes with the same canvas boundaries as a full
+        // repaint. Clipping the strokes themselves can change antialias coverage.
+        const surface = full ? tile.ctx : (this.patchSurface ??= tileSurface());
+        if (!full)
+          surface.setTransform(tileScale, 0, 0, tileScale, -tileScale * x, -tileScale * y);
+        if (full) surface.clearRect(x, y, tileSize, tileSize);
+        else surface.clearRect(d.left, d.top, width, height);
         for (const s of tile.segments)
-          if (s.length) stroke(tile.ctx, s, this.color(s), 2 * s.radius);
-        tile.dirty = false;
+          if (s.length && (full || overlapsDamage(s, d)))
+            stroke(surface, s, this.color(s), 2 * s.radius);
+        if (!full) {
+          tile.ctx.clearRect(d.left, d.top, width, height);
+          tile.ctx.drawImage(
+            surface.canvas,
+            (d.left - x) * tileScale,
+            (d.top - y) * tileScale,
+            width * tileScale,
+            height * tileScale,
+            d.left,
+            d.top,
+            width,
+            height
+          );
+        }
+        tile.damage = undefined;
       }
       ctx.drawImage(tile.ctx.canvas, x, y, tileSize, tileSize);
     }
@@ -317,9 +387,10 @@ export class FungalFabric {
       const flash =
         wound.strength *
         Math.max(0, 1 - (time - wound.start) / this.tuning.woundFlashSeconds);
-      if (flash > 0 && s.length) {
+      if (flash > 0) {
         ctx.globalAlpha = alpha * flash;
-        stroke(ctx, s, this.palette.wound, 2 * s.radius + 2 * flash);
+        for (const segment of s.strokes)
+          stroke(ctx, segment, this.palette.wound, 2 * segment.radius + 2 * flash);
       }
     }
     ctx.globalAlpha = alpha;

@@ -1,5 +1,6 @@
 import type { Point } from "../level";
 
+export const fiberColorSteps = 16;
 export const defaultColonySeed = 37;
 export const defaultPrimaryColor = "#cf817c";
 
@@ -14,7 +15,7 @@ export const defaultColonyTuning = {
   followRadius: 13,
   meanSplitLength: 95, // Mean distance between split attempts on an eligible tip.
   minSplitWeight: 0.5,
-  gemLaunchSeconds: 6, // Time for an unloaded, mature gem to earn a new main head.
+  gemLaunchSeconds: 6, // Time for a mature gem to earn a new main head.
   gemLaunchReach: 56, // Distance to look for open growing space around a gem.
 
   // A split or a new group of minor buds can form a gem this far from other gems.
@@ -25,17 +26,13 @@ export const defaultColonyTuning = {
   gemGrowSeconds: 0.38,
   gemCollectSeconds: 0.22,
 
-  // Nutrient supply is 0..1. Length and uptake are measured along actual fibers.
-  nutrientStepSeconds: 0.15, // Batch transport and tissue updates independently of tip ticks.
-  nutrientLength: 160, // Characteristic supply distance along an unbranched main strand.
-  gemOutput: 1200, // Source capacity in equivalent world units of main-fiber demand.
-  minorConductance: 0.08, // Relative to main fibers of the same length.
-  minorUptake: 0.08,
+  // Gem power falls off with route distance along main strands.
+  stretchLength: 16, // Maximum main-strand length sharing health with its attached fibers.
+  nutrientStepSeconds: 0.15, // Advance tissue health independently of tip ticks.
+  nutrientLength: 160, // Gem power falls to 1/e at this route distance.
   maintenanceSupply: 0.22, // Below this supply, tissue loses health and tips pause.
   starvationSeconds: 5, // Base time scale for connected tissue loss and recovery.
   lowSupplyDecayBoost: 7, // Extra decay at near-zero supply, scaled by squared deficit.
-  minWidthFraction: 0.45, // mainRadius/minorRadius are the fully fed radii.
-  widthResponseSeconds: 0.6,
   ashHoldSeconds: 0.3, // Nonconducting, harmless gray fiber before flakes fall.
   ashBurstSpacing: 16, // Group nearby crumbling fibers into one dust burst per area this wide.
   showNutrientSupply: false, // Color live tissue from depleted purple to well-fed gold.
@@ -94,7 +91,6 @@ function validTuning(key: keyof ColonyTuning, value: number) {
       return value >= 0 && value <= 1;
     case "woundMinStrength":
     case "woundKillStrength":
-    case "minWidthFraction":
       return value > 0 && value <= 1;
     case "maintenanceSupply":
       return value > 0 && value < 1;
@@ -120,7 +116,17 @@ function validTuning(key: keyof ColonyTuning, value: number) {
 export function resolveColonyTuning(value: unknown, colonyId: string): ColonyTuning {
   if (value !== undefined && (!record(value) || Array.isArray(value)))
     throw new Error(`Expected a tuning object in fungal colony "${colonyId}".`);
-  const tuning = { ...defaultColonyTuning, ...value };
+  const overrides = { ...value };
+  // Previously exported level data can include all defaults from the transport model.
+  for (const retired of [
+    "gemOutput",
+    "minorConductance",
+    "minorUptake",
+    "minWidthFraction",
+    "widthResponseSeconds"
+  ])
+    delete overrides[retired];
+  const tuning = { ...defaultColonyTuning, ...overrides };
   for (const [key, v] of Object.entries(tuning)) {
     if (!Object.hasOwn(defaultColonyTuning, key))
       throw new Error(`Unknown tuning.${key} in fungal colony "${colonyId}".`);

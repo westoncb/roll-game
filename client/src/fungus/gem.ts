@@ -84,10 +84,10 @@ export class FungalNode implements Entity {
     return this.trip?.phase === "reeling";
   }
 
-  readyToLaunch(dt: number, growthFactor: number) {
+  readyToLaunch(dt: number) {
     if (this.age < this.colony.tuning.gemGrowSeconds) return false;
     const interval = this.colony.tuning.gemLaunchSeconds;
-    this.launchCredit += dt * growthFactor;
+    this.launchCredit += dt;
     if (this.launchCredit < interval) return false;
     // One search per charge, including when the whole neighborhood is saturated.
     this.launchCredit %= interval;

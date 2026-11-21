@@ -13,7 +13,7 @@ import { GrowthDomain } from "./domain";
 import { FungalNode } from "./gem";
 import { colonyPalette, type ColonyPalette } from "./palette";
 import { FungalFabric } from "./fabric";
-import type { Strand } from "./network";
+import type { Strand, Stretch } from "./network";
 import { WoundPulse } from "./wound";
 
 export type Junction = { position: vec2; arrivals: number; node?: FungalNode };
@@ -32,6 +32,7 @@ type Tip = {
 };
 type Buds = { next: number; left: number; side: number; fan: number; length: number };
 type Filament = {
+  owner: Stretch;
   p: vec2;
   angle: number;
   guide: number;
@@ -125,7 +126,7 @@ export class FungalColony implements Entity {
         previous = p;
       }
     }
-    this.fabric.network.solve();
+    this.fabric.network.refreshDistances();
     if (data.tips) {
       for (const { from, direction } of data.tips) {
         const site = this.nodes.get(from)!.junction;
@@ -161,8 +162,10 @@ export class FungalColony implements Entity {
     this.updateTissue(this.time);
     node.junction.node = undefined;
     this.fabric.network.setSource(node.junction.position, false);
-    this.fabric.network.solve();
-    this.pulses.push(new WoundPulse(node.junction.position, this.time, this.tuning));
+    this.fabric.shedDisconnected();
+    this.pruneGrowth();
+    const point = this.fabric.network.points.get(node.junction.position);
+    if (point) this.pulses.push(new WoundPulse(point, this.time, this.tuning));
     const index = this.sites.indexOf(node.junction);
     if (index >= 0) this.sites.splice(index, 1);
     this.detached.add(node);
@@ -277,15 +280,28 @@ export class FungalColony implements Entity {
   }
 
   private depositMain(a: vec2, b: vec2, strand: MainStrand, buds: Buds) {
+    if (a === b) return false;
     const length = vec2.distance(a, b);
-    if (!length) {
-      this.fabric.deposit(a, b, strand, this.tick);
-      return false;
+    const pieces = Math.max(1, Math.ceil(length / this.tuning.stretchLength));
+    let startedBudGroup = false;
+    let start = a;
+    for (let i = 1; i <= pieces; i++) {
+      const end = i === pieces ? b : vec2.lerp(vec2.create(), a, b, i / pieces);
+      const pieceLength = vec2.distance(start, end);
+      const owner = this.fabric.network.extend(start, end, strand.trailId, pieceLength);
+      if (pieceLength) {
+        this.fabric.deposit(start, end, strand, this.tick, owner, pieceLength / length);
+        if (this.budAlong(start, end, pieceLength, buds, owner)) startedBudGroup = true;
+      }
+      start = end;
     }
+    return startedBudGroup;
+  }
+
+  private budAlong(a: vec2, b: vec2, length: number, buds: Buds, owner: Stretch) {
     const tangent = Math.atan2(b[1] - a[1], b[0] - a[0]);
     const rand = this.minorRandom;
     let startedBudGroup = false;
-    let roots: vec2[] | undefined;
     while (buds.next <= length) {
       if (!buds.left) {
         startedBudGroup = true;
@@ -295,11 +311,11 @@ export class FungalColony implements Entity {
         buds.length = 10 + 43 * rand() ** 1.45;
       }
       const root = vec2.lerp(vec2.create(), a, b, buds.next / length);
-      (roots ??= []).push(root);
       const bias = buds.fan + 0.55 * (2 * rand() - 1);
       const budget = buds.length * (0.6 + 0.95 * rand());
       this.filaments.push({
         p: root,
+        owner,
         angle: tangent + buds.side * bias,
         guide: tangent + buds.side * (0.16 + 0.4 * bias),
         bend: 0,
@@ -317,7 +333,6 @@ export class FungalColony implements Entity {
       buds.next += buds.left ? 0.8 + 1.9 * rand() : this.gap();
     }
     buds.next -= length;
-    this.fabric.deposit(a, b, strand, this.tick, roots);
     return startedBudGroup;
   }
 
@@ -325,13 +340,15 @@ export class FungalColony implements Entity {
     const active: Filament[] = [];
     const rand = this.minorRandom;
     for (const f of this.filaments) {
-      const point = this.fabric.network.points.get(f.p);
-      if (!point) continue;
+      if (f.owner.dead) continue;
       if (this.tick < f.born) {
         active.push(f);
         continue;
       }
-      f.credit += this.fabric.network.growthFactor(point);
+      f.credit += this.fabric.network.growthFactor(
+        f.owner.midpointDistance,
+        f.owner.health
+      );
       if (f.credit < 1) {
         active.push(f);
         continue;
@@ -350,7 +367,7 @@ export class FungalColony implements Entity {
         y + f.speed * Math.sin(f.angle)
       );
       if (!this.domain.clear(f.p, p, this.tuning.minorRadius)) continue;
-      this.fabric.deposit(f.p, p, f.strand, this.tick);
+      this.fabric.deposit(f.p, p, f.strand, this.tick, f.owner);
       f.p = p;
       f.length += f.speed;
       active.push(f);
@@ -465,16 +482,16 @@ export class FungalColony implements Entity {
       next: Tip[] = [];
     const network = this.fabric.network;
     for (const node of this.nodes.values()) {
-      const point = network.points.get(node.junction.position)!;
-      if (node.readyToLaunch(this.tuning.tickSeconds, network.growthFactor(point)))
-        this.launchFrom(node.junction);
+      if (node.readyToLaunch(this.tuning.tickSeconds)) this.launchFrom(node.junction);
     }
     for (const tip of this.tips) {
       const point = network.points.get(tip.p);
       if (!point) continue;
       // Fixed-length deposits keep branch probability, density and bud spacing per unit
       // of growth. A living, underfed tip can resume if another route supplies it.
-      tip.credit += tip.weight * network.growthFactor(point);
+      let health = point.source ? 1 : 0;
+      for (const s of point.incident) health = Math.max(health, s.health);
+      tip.credit += tip.weight * network.growthFactor(point.distance, health);
       if (tip.credit < 1) {
         waiting.push({ tip, p: tip.p, angle: tip.angle, bend: tip.bend });
         continue;
@@ -579,16 +596,21 @@ export class FungalColony implements Entity {
         next.push(t);
       }
     }
+    network.refreshDistances();
     this.tips = next;
     this.growFilaments();
   }
 
   private updateTissue(time: number) {
     this.fabric.updateTissue(time);
+    this.pruneGrowth();
+  }
+
+  private pruneGrowth() {
     const points = this.fabric.network.points;
     this.sites = this.sites.filter((site) => points.has(site.position));
     this.tips = this.tips.filter((tip) => points.has(tip.p));
-    this.filaments = this.filaments.filter((filament) => points.has(filament.p));
+    this.filaments = this.filaments.filter((filament) => !filament.owner.dead);
   }
 
   update(dt: number) {

@@ -1,4 +1,4 @@
-import { defaultPrimaryColor } from "./config";
+import { defaultPrimaryColor, fiberColorSteps } from "./config";
 
 function luminance(channels: number[]) {
   const [r, g, b] = channels.map((c) =>
@@ -40,20 +40,21 @@ export function colonyPalette(primary = defaultPrimaryColor) {
     // Give the bruise a plum hue at the lightness halfway between this fiber and its ash.
     const midpoint = `color-mix(in oklab, ${ash}, ${healthy})`;
     const bruise = `oklch(from ${midpoint} l 0.045 325)`;
-    return Array.from({ length: 17 }, (_, i) => {
+    const half = fiberColorSteps / 2;
+    return Array.from({ length: fiberColorSteps + 1 }, (_, i) => {
       if (i === 0) return ash;
-      if (i === 16) return healthy;
-      return i <= 8
-        ? `color-mix(in oklab, ${ash}, ${bruise} ${(100 * i) / 8}%)`
-        : `color-mix(in oklab, ${bruise}, ${healthy} ${(100 * (i - 8)) / 8}%)`;
+      if (i === fiberColorSteps) return healthy;
+      return i <= half
+        ? `color-mix(in oklab, ${ash}, ${bruise} ${(100 * i) / half}%)`
+        : `color-mix(in oklab, ${bruise}, ${healthy} ${(100 * (i - half)) / half}%)`;
     });
   };
   return {
     primary,
     ash,
     tissue: { main: healthRamp(primary), minor: healthRamp(minor) },
-    supply: Array.from({ length: 17 }, (_, i) =>
-      tint("#4c285e", "#ffe18a", (100 * i) / 16)
+    supply: Array.from({ length: fiberColorSteps + 1 }, (_, i) =>
+      tint("#4c285e", "#ffe18a", (100 * i) / fiberColorSteps)
     ),
     tip: tint(primary, "white", 42),
     wound: tint(gem, "white", 72),
