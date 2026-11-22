@@ -17,6 +17,7 @@ import { FungalColony } from "./fungus/colony";
 import type { ColonyData } from "./fungus/config";
 import { GrowthDomain } from "./fungus/domain";
 import { PointsPopup } from "./points-popup";
+import { PunchBurst } from "./punch-burst";
 
 export type Point = [number, number];
 export type GroundData = { vertices: Point[]; style?: string };
@@ -38,7 +39,7 @@ function inPlay(entity: Entity) {
 
 export class Level {
   readonly particles = new ParticleSystem();
-  private readonly points = new Set<PointsPopup>();
+  private readonly effects = new Set<PointsPopup | PunchBurst>();
   shake = 0;
   readonly size: Readonly<{ width: number; height: number }>;
   readonly player: Player;
@@ -113,13 +114,23 @@ export class Level {
     const events: PlayerEvents = {
       scored: (player, points, at) => {
         const color = player === this.player ? "#ffaaa7" : "#82eddf";
-        this.points.add(new PointsPopup(points, color, at, this.time, this.size));
+        this.effects.add(new PointsPopup(points, color, at, this.time, this.size));
       },
-      punched: (at, direction, damage) => {
-        this.impact(at, direction, damage / 45);
+      punched: (at, direction, strength) => {
+        this.effects.add(new PunchBurst(at, direction, strength, this.time));
+        this.particles.play(
+          gameAssets.particles.get("punch-dust"),
+          { kind: "world", position: at, angle: Math.atan2(-direction[1], -direction[0]) },
+          { strength }
+        );
       },
       defeated: (victim, attacker) => {
-        this.impact(victim.body.pos, victim.body.vel, 1);
+        this.shake = 6;
+        this.particles.play(gameAssets.particles.get("impact-sparks"), {
+          kind: "world",
+          position: victim.body.pos,
+          angle: Math.atan2(victim.body.vel[1], victim.body.vel[0])
+        });
         attacker?.award("knockout", victim.body.pos);
         victim.punchedBy = null;
         if (this.rival) victim.respawnRemaining = respawnDelaySeconds;
@@ -153,15 +164,6 @@ export class Level {
       );
       this.entities.push(this.rival);
     }
-  }
-
-  private impact(position: vec2, direction: vec2, strength: number) {
-    this.shake = Math.max(this.shake, 6 * strength);
-    this.particles.play(
-      gameAssets.particles.get("impact-sparks"),
-      { kind: "world", position, angle: Math.atan2(direction[1], direction[0]) },
-      { strength }
-    );
   }
 
   private resolveContact(actor: Player, from: vec2, dt: number) {
@@ -238,8 +240,8 @@ export class Level {
     this.previousTime = this.time;
     this.time += dt;
     this.shake = Math.max(0, this.shake - 25 * dt);
-    for (const popup of this.points) {
-      if (popup.expiresAt <= this.previousTime) this.points.delete(popup);
+    for (const effect of this.effects) {
+      if (effect.expiresAt <= this.previousTime) this.effects.delete(effect);
     }
     if (this.result && this.rival) {
       this.particles.step(dt);
@@ -294,6 +296,6 @@ export class Level {
       if (inPlay(entity)) entity.visual.paintSampled(ctx, time);
     }
     this.particles.draw(ctx, "front", alpha);
-    for (const popup of this.points) popup.visual.render(ctx, alpha, time);
+    for (const effect of this.effects) effect.visual.render(ctx, alpha, time);
   }
 }

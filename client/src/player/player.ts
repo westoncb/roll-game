@@ -79,7 +79,7 @@ const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 
 export interface PlayerEvents {
   scored(player: Player, points: number, at: vec2): void;
-  punched(at: vec2, direction: vec2, damage: number): void;
+  punched(at: vec2, direction: vec2, strength: number): void;
   defeated(player: Player, attacker: Player | null): void;
 }
 
@@ -399,8 +399,10 @@ export class Player implements Entity {
     this.launchCharge = this.jumpHeldSeconds = null;
     this.groundSpeed = 0;
     vec2.scaleAndAdd(this.body.vel, this.body.vel, normal, impulse);
-    this.hitFlash = 1;
-    this.events.punched(at, normal, damage);
+    const strength = Math.min(1, impulse / playerConfig.gun.punchImpulse);
+    this.hitFlash = Math.max(this.hitFlash, lerp(0.2, 0.85, strength));
+    this.screen.showImpact();
+    this.events.punched(at, normal, strength);
     this.takeDamage(damage, attacker);
   }
 

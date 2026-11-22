@@ -38,7 +38,8 @@ export class PlayerScreen extends Drawable2D {
   private bootProgress: number | null = null;
   private charge = 0;
   private time = 0;
-  private lastAirTime = -Infinity;
+  private lastStaticTime = -Infinity;
+  private impactUntil = 0;
   private settledSeconds = 0;
   private contentAngle = 0;
 
@@ -59,7 +60,7 @@ export class PlayerScreen extends Drawable2D {
     this.time += dt;
     this.bootProgress = bootProgress;
     this.charge = charge;
-    if (airborne) this.lastAirTime = this.time;
+    if (airborne) this.lastStaticTime = this.time;
     this.mode = this.displayMode();
     this.lineTime += dt;
     // Leave a short pause after the final character before scrolling the line up.
@@ -80,11 +81,18 @@ export class PlayerScreen extends Drawable2D {
     }
   }
 
+  showImpact() {
+    this.lastStaticTime = this.time;
+    this.impactUntil = this.time + 0.24;
+    this.mode = "flightStatic";
+  }
+
   private displayMode(): ScreenMode {
     if (this.bootProgress !== null) return "boot";
+    if (this.time < this.impactUntil) return "flightStatic";
     if (this.gun.showingSight) return "sight";
     if (this.charge > 0) return "chargeScope";
-    if (this.time - this.lastAirTime < staticHoldSeconds + staticFadeSeconds)
+    if (this.time - this.lastStaticTime < staticHoldSeconds + staticFadeSeconds)
       return "flightStatic";
     return "terminal";
   }
@@ -115,7 +123,7 @@ export class PlayerScreen extends Drawable2D {
       return;
     }
     if (this.mode === "flightStatic") {
-      const fadeTime = Math.max(0, this.time - this.lastAirTime - staticHoldSeconds);
+      const fadeTime = Math.max(0, this.time - this.lastStaticTime - staticHoldSeconds);
       ctx.globalAlpha *= 1 - fadeTime / staticFadeSeconds;
       drawStatic(ctx, Math.floor(this.time * 14));
       return;
