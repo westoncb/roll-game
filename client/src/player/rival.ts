@@ -5,7 +5,13 @@ import type { InputState } from "../engine/input";
 import { gravityY } from "../engine/physics";
 import type { FungalColony } from "../fungus/colony";
 import { approach, tau } from "../utils/math";
-import { playerConfig, punchDamage } from "./config";
+import { playerConfig } from "./config";
+import {
+  extensionTimeAt,
+  punchImpact,
+  tipVelocity,
+  type PunchImpact
+} from "./grapple-motion";
 import type { CastBeam } from "./gun";
 import type { Player } from "./player";
 import {
@@ -88,12 +94,16 @@ export class RivalController {
     const from = this.self.body.pos;
     const direction = vec2.subtract(vec2.create(), target, from);
     const range = vec2.length(direction);
-    return this.cast(from, vec2.normalize(direction, direction), range + 1);
+    return this.cast(
+      from,
+      vec2.normalize(direction, direction),
+      Math.min(range + 1, gun.maxReach)
+    );
   }
 
   private intercept() {
     const { pos, vel } = this.opponent.body;
-    const flight = vec2.distance(this.self.body.pos, pos) / gun.extensionSpeed;
+    const flight = extensionTimeAt(vec2.distance(this.self.body.pos, pos));
     // Lead within the robot's silhouette so the sight still selects the glove.
     const lead = Math.min(
       flight,
@@ -106,13 +116,9 @@ export class RivalController {
     return this.colonies.some((c) => c.playerContact(from, to, radius));
   }
 
-  // Test the one direction available from this firing position, including a slide
-  // along the ground after impact. Both robots use the same forward impulse.
-  private punchTowardFungus(aim: vec2) {
-    const { pos, radius } = this.opponent.body;
-    const velocity = vec2.subtract(vec2.create(), aim, this.self.body.pos);
-    vec2.normalize(velocity, velocity);
-    vec2.scale(velocity, velocity, gun.punchSpeed);
+  private punchTowardFungus(impact: PunchImpact) {
+    const { pos, radius, vel } = this.opponent.body;
+    const velocity = vec2.scaleAndAdd(vec2.create(), vel, impact.normal, impact.impulse);
     const at = vec2.clone(pos),
       end = vec2.create(),
       step = vec2.create();
@@ -147,9 +153,7 @@ export class RivalController {
 
   private decide() {
     const { pos, vel, radius } = this.self.body;
-    const gems = this.colonies.flatMap((c) =>
-      Array.from(c.gems.values(), (gem) => gem.visual.position)
-    );
+    const gems = this.colonies.flatMap((colony) => Array.from(colony.gems.values()));
     this.walk = null;
     if (this.self.inFungus && this.self.gun.ready && this.cooldown <= 0) {
       this.reposition(pos, true);
@@ -175,20 +179,33 @@ export class RivalController {
     if (!this.self.gun.ready || this.cooldown > 0) return;
     const aim = this.intercept();
     const distance = vec2.distance(pos, aim);
-    if (
-      distance < 660 &&
-      this.sight(aim).kind === "robot" &&
-      (distance < 230 ||
-        this.opponent.health <= punchDamage(distance - this.opponent.body.radius) ||
-        this.punchTowardFungus(aim))
-    ) {
-      this.aim = { kind: "punch", point: aim, remaining: 0.35 };
-      return;
+    const hit = this.sight(aim);
+    if (hit.kind === "robot") {
+      const direction = vec2.subtract(vec2.create(), aim, pos);
+      const velocity = tipVelocity(
+        vec2.normalize(direction, direction),
+        vec2.distance(pos, hit.point),
+        vel
+      );
+      const impact = punchImpact(velocity, hit.normal, hit.target.body.vel);
+      if (
+        impact.damage > 0 &&
+        (distance < 230 ||
+          this.opponent.health <= impact.damage ||
+          this.punchTowardFungus(impact))
+      ) {
+        this.aim = { kind: "punch", point: aim, remaining: 0.35 };
+        return;
+      }
     }
-    gems.sort((a, b) => vec2.squaredDistance(pos, a) - vec2.squaredDistance(pos, b));
+    gems.sort(
+      (a, b) =>
+        vec2.squaredDistance(pos, a.visual.position) -
+        vec2.squaredDistance(pos, b.visual.position)
+    );
     for (const gem of gems) {
-      if (vec2.distance(pos, gem) > 590) break;
-      const hit = this.sight(gem);
+      if (vec2.distance(pos, gem.visual.position) > gun.maxReach + gem.radius) continue;
+      const hit = this.sight(gem.visual.position);
       if (hit.kind === "gem") {
         this.aim = {
           kind: "gem",
@@ -198,7 +215,7 @@ export class RivalController {
         return;
       }
     }
-    this.reposition(gems[0] ?? this.opponent.body.pos);
+    this.reposition(gems[0]?.visual.position ?? this.opponent.body.pos);
   }
 
   // Probe reachable surfaces for a firing position. Favor cover-free sight of
@@ -209,7 +226,7 @@ export class RivalController {
     for (let i = 0; i < 24; i++) {
       const angle = (tau * i) / 24;
       const direction = vec2.fromValues(Math.cos(angle), Math.sin(angle));
-      const hit = this.cast(pos, direction);
+      const hit = this.cast(pos, direction, gun.maxReach);
       if (hit.kind !== "clingable") continue;
       const landing = vec2.scaleAndAdd(vec2.create(), hit.point, hit.normal, radius);
       const travel = vec2.subtract(vec2.create(), landing, pos);

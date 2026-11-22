@@ -2,13 +2,8 @@ import { tau } from "../utils/math";
 
 export const knockoutPoints = 10;
 export const maxHealth = 100;
+export const respawnGraceSeconds = 0.75;
 export const fungusDamagePerSecond = 36;
-
-// The glove hits hardest within one robot's diameter, then loses force over its reach.
-export function punchDamage(distance: number) {
-  const falloff = Math.min(1, Math.max(0, (distance - 90) / 450));
-  return Math.round(30 - 15 * falloff);
-}
 
 // Distances are in world units, angles in radians, and times in seconds.
 export const playerConfig = {
@@ -66,7 +61,7 @@ export const playerConfig = {
   },
   jump: {
     tapSpeed: 205,
-    fullSpeed: 750,
+    fullSpeed: 1500,
     fullChargeSeconds: 0.3,
     chargedSpeedScale: 0.02,
     // Distance from the shell rim to a free ankle at full charge.
@@ -79,11 +74,13 @@ export const playerConfig = {
   gun: {
     aimSpeed: 2.7,
     aimMemoryDistance: 48,
-    extensionSpeed: 900,
+    maxReach: 540,
+    launchSpeed: 1500,
     retractSpeed: 1150,
     pullSpeed: 710,
     reelSpeed: 720,
-    punchSpeed: 880,
+    punchImpulse: 880,
+    punchDamage: 30,
     minPullProgressSpeed: 0.1,
     barrelLength: 45,
     barrelSpeed: 375,

@@ -20,6 +20,7 @@ const staticColors = [
 ];
 
 type ScreenInput = {
+  bootProgress: number | null;
   airborne: boolean;
   charge: number;
   speed: number;
@@ -27,13 +28,14 @@ type ScreenInput = {
   plantedNormal: vec2 | null;
 };
 
-type ScreenMode = "terminal" | "sight" | "chargeScope" | "flightStatic";
+type ScreenMode = "boot" | "terminal" | "sight" | "chargeScope" | "flightStatic";
 
 export class PlayerScreen extends Drawable2D {
   private previousLine = ">SYS";
   private line = "F000";
   private lineTime = 0;
   private mode: ScreenMode = "terminal";
+  private bootProgress: number | null = null;
   private charge = 0;
   private time = 0;
   private lastAirTime = -Infinity;
@@ -50,8 +52,12 @@ export class PlayerScreen extends Drawable2D {
     vec2.set(this.scale, scale, scale);
   }
 
-  update(dt: number, { airborne, charge, speed, feet, plantedNormal }: ScreenInput) {
+  update(
+    dt: number,
+    { bootProgress, airborne, charge, speed, feet, plantedNormal }: ScreenInput
+  ) {
     this.time += dt;
+    this.bootProgress = bootProgress;
     this.charge = charge;
     if (airborne) this.lastAirTime = this.time;
     this.mode = this.displayMode();
@@ -75,6 +81,7 @@ export class PlayerScreen extends Drawable2D {
   }
 
   private displayMode(): ScreenMode {
+    if (this.bootProgress !== null) return "boot";
     if (this.gun.showingSight) return "sight";
     if (this.charge > 0) return "chargeScope";
     if (this.time - this.lastAirTime < staticHoldSeconds + staticFadeSeconds)
@@ -84,7 +91,8 @@ export class PlayerScreen extends Drawable2D {
 
   private drawScreen(ctx: CanvasRenderingContext2D) {
     const { width, height, cornerRadius, borderWidth } = screen;
-    if (this.mode === "flightStatic") ctx.fillStyle = "#000";
+    if (this.mode === "boot") ctx.fillStyle = "#2b211b";
+    else if (this.mode === "flightStatic") ctx.fillStyle = "#000";
     else if (this.mode === "sight") ctx.fillStyle = "#0c293a";
     ctx.beginPath();
     ctx.roundRect(-width / 2, -height / 2, width, height, cornerRadius);
@@ -92,6 +100,20 @@ export class PlayerScreen extends Drawable2D {
     ctx.lineWidth = borderWidth;
     ctx.stroke();
     ctx.clip();
+    if (this.mode === "boot") {
+      // Keep the boot readout level even when the shell rolls.
+      const matrix = this.renderWorldMatrix;
+      ctx.rotate(-Math.atan2(matrix[1], matrix[0]));
+      ctx.textAlign = "center";
+      ctx.font = 'bold 7px "Courier Prime", Menlo, monospace';
+      ctx.fillStyle = "#ffe5af";
+      ctx.fillText("BOOT", 0, 0);
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = i <= (this.bootProgress ?? 0) * 4 ? "#ffcd81" : "#65513e";
+        ctx.fillRect(-7.5 + i * 4, 3, 3, 2);
+      }
+      return;
+    }
     if (this.mode === "flightStatic") {
       const fadeTime = Math.max(0, this.time - this.lastAirTime - staticHoldSeconds);
       ctx.globalAlpha *= 1 - fadeTime / staticFadeSeconds;

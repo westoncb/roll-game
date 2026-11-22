@@ -20,6 +20,7 @@ import {
 import type { GroundEdge, GroundPolygon } from "../engine/ground";
 import type { InputState } from "../engine/input";
 import { PlayerScreen } from "./screen";
+import type { PunchImpact } from "./grapple-motion";
 import { PlayerGun, type CastBeam } from "./gun";
 import type { EffectPlayer } from "../engine/particles/system";
 import {
@@ -37,8 +38,8 @@ import {
   legSpacing,
   maxLegReach,
   playerConfig,
-  punchDamage,
   restLegLength,
+  respawnGraceSeconds,
   rollRadius,
   shellRadius,
   type PlayerColors
@@ -173,7 +174,7 @@ export class Player implements Entity {
   private landingVelocity?: vec2;
   private groundSpeed = 0;
   private coastingFromCorner = false;
-  readonly visual = new Drawable2D();
+  readonly visual = new Drawable2D((ctx, { time }) => this.drawSpawnShield(ctx, time));
   readonly body = new PhysicsBody(this.visual.position, rollRadius);
   // The stance can crouch relative to the collider. Only the shell rolls.
   private readonly stance = new Drawable2D((ctx) => this.drawLegs(ctx), this.visual);
@@ -389,23 +390,52 @@ export class Player implements Entity {
     if (!this.inFungus) this.fungusAttacker = null;
   }
 
-  takePunch(attacker: Player, direction: vec2, at: vec2, distance: number) {
-    if (!this.health || this.spawnProtection) return;
+  takePunch(attacker: Player, at: vec2, { normal, impulse, damage }: PunchImpact) {
+    if (!this.health || this.spawnProtection || impulse <= 0) return;
     this.punchedBy = attacker;
     if (this.gun.anchor) this.gun.finish();
     this.support = null;
     this.coastingFromCorner = false;
     this.launchCharge = this.jumpHeldSeconds = null;
     this.groundSpeed = 0;
-    vec2.scale(this.body.vel, direction, playerConfig.gun.punchSpeed);
-    const damage = punchDamage(distance);
+    vec2.scaleAndAdd(this.body.vel, this.body.vel, normal, impulse);
     this.hitFlash = 1;
-    this.events.punched(at, direction, damage);
+    this.events.punched(at, normal, damage);
     this.takeDamage(damage, attacker);
   }
 
   update(dt: number) {
     this.hitFlash = Math.max(0, this.hitFlash - dt / 0.15);
+  }
+
+  private get bootProgress() {
+    if (!this.spawnProtection) return null;
+    return this.spawnProtection === "overgrown"
+      ? 0
+      : 1 - this.spawnProtection / respawnGraceSeconds;
+  }
+
+  private drawSpawnShield(ctx: CanvasRenderingContext2D, time: number) {
+    const progress = this.bootProgress;
+    if (progress === null) return;
+    const radius = this.body.radius + 3;
+    ctx.globalAlpha *= 1 - 0.55 * progress;
+    ctx.fillStyle = "rgba(255, 207, 128, 0.09)";
+    ctx.strokeStyle = "rgba(255, 217, 151, 0.55)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, tau);
+    ctx.fill();
+    ctx.stroke();
+    ctx.rotate(time * 1.4);
+    ctx.strokeStyle = "#ffe5af";
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const angle = (i * tau) / 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius + 2, angle, angle + 0.64);
+      ctx.stroke();
+    }
   }
 
   private drawDamage(ctx: CanvasRenderingContext2D, time: number) {
@@ -579,6 +609,7 @@ export class Player implements Entity {
       0
     );
     this.screen.update(dt, {
+      bootProgress: this.bootProgress,
       airborne: this.support === null,
       charge: this.jumpCharge(),
       speed,

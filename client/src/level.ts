@@ -11,7 +11,7 @@ import { ParticleSystem } from "./engine/particles/system";
 import { stepPhysics } from "./engine/physics";
 import { Player, type PlayerEvents } from "./player/player";
 import type { BeamHit, CastBeam } from "./player/gun";
-import { rivalColors } from "./player/config";
+import { respawnGraceSeconds, rivalColors } from "./player/config";
 import { RivalController } from "./player/rival";
 import { FungalColony } from "./fungus/colony";
 import type { ColonyData } from "./fungus/config";
@@ -30,7 +30,6 @@ export type LevelData = {
 };
 
 export type RoundResult = "player-contact" | "cleared";
-const respawnGraceSeconds = 1.5;
 const respawnDelaySeconds = 2;
 
 function inPlay(entity: Entity) {
@@ -72,14 +71,6 @@ export class Level {
       visual.drawSeed = (terrainSeed + i) >>> 0;
       return polygon;
     });
-    const worldMin = vec2.create();
-    const worldMax = vec2.fromValues(data.width, data.height);
-    for (const polygon of this.ground) {
-      for (const vertex of polygon.vertices) {
-        vec2.min(worldMin, worldMin, vertex);
-        vec2.max(worldMax, worldMax, vertex);
-      }
-    }
     this.domain = new GrowthDomain(data.width, data.height, this.ground);
     this.fungalColonies = (data.fungalColonies ?? []).map(
       (config) =>
@@ -91,13 +82,10 @@ export class Level {
           );
         })
     );
-    const worldDiagonal = vec2.distance(worldMin, worldMax);
     const castFor =
       (opponent: () => Player | undefined): CastBeam =>
-      (from, direction, distance) => {
-        // A sight ray spans the entire world, even when the player is outside its bounds.
-        const range = distance ?? vec2.distance(from, worldMin) + worldDiagonal;
-        const to = vec2.scaleAndAdd(vec2.create(), from, direction, range);
+      (from, direction, distance, robotMotion) => {
+        const to = vec2.scaleAndAdd(vec2.create(), from, direction, distance);
         const groundHit = castSegment(from, to, this.ground);
         let first: BeamHit | null = groundHit ? { kind: "clingable", ...groundHit } : null;
         for (const colony of this.fungalColonies) {
@@ -108,20 +96,19 @@ export class Level {
         const target = opponent();
         if (target && !target.respawnRemaining && !target.spawnProtection) {
           const { pos, radius } = target.body;
-          const hit = castCapsule(from, to, 0, pos, pos, radius);
-          if (hit && (!first || hit.fraction < first.fraction))
+          // Sweep the flying tip against a moving robot in its end-of-tick frame.
+          // Sight and AI probes sample only the current pose.
+          const previous = target === this.player ? this.playerFrom : this.rivalFrom;
+          const drift =
+            robotMotion === "swept" ? vec2.subtract(vec2.create(), pos, previous) : null;
+          const start = drift ? vec2.add(vec2.create(), from, drift) : from;
+          const hit = castCapsule(start, to, 0, pos, pos, radius);
+          if (hit && (!first || hit.fraction < first.fraction)) {
+            if (drift) vec2.scaleAndAdd(hit.point, hit.point, drift, hit.fraction - 1);
             first = { kind: "robot", target, ...hit };
+          }
         }
-        if (first) return first;
-        // A shot fired from outside can still travel back into the level.
-        for (const axis of [0, 1]) {
-          if (
-            (to[axis] < worldMin[axis] && to[axis] <= from[axis]) ||
-            (to[axis] > worldMax[axis] && to[axis] >= from[axis])
-          )
-            return { kind: "miss", point: to };
-        }
-        return { kind: "clear", point: to };
+        return first ?? { kind: "clear", point: to };
       };
     const events: PlayerEvents = {
       scored: (player, points, at) => {

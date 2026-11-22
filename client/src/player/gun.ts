@@ -1,6 +1,13 @@
 import { vec2, type ReadonlyVec2 } from "gl-matrix";
 import type { TerrainHit } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
+import {
+  extensionAt,
+  extensionSeconds,
+  extensionTimeAt,
+  punchImpact,
+  tipVelocity
+} from "./grapple-motion";
 import { playerConfig } from "./config";
 import { approach, tau } from "../utils/math";
 import type { FungalGem } from "../fungus/gem";
@@ -10,19 +17,27 @@ import type { Player } from "./player";
 export type BeamHit =
   | ({ kind: "clingable" } & TerrainHit)
   | { kind: "gem"; point: vec2; normal: vec2; fraction: number; gem: FungalGem }
-  | { kind: "robot"; point: vec2; fraction: number; target: Player };
+  | { kind: "robot"; point: vec2; normal: vec2; fraction: number; target: Player };
 export type CastBeam = (
   from: vec2,
   direction: vec2,
-  distance?: number
-) => BeamHit | { kind: "miss" | "clear"; point: vec2 };
+  distance: number,
+  robotMotion?: "swept"
+) => BeamHit | { kind: "clear"; point: vec2 };
 
 const gun = playerConfig.gun;
 type Head = "claw" | "glove";
 const nose: Record<Head, ReadonlyVec2> = { claw: [gun.headLength, 0], glove: [24, 0] };
 type Shot =
   | { kind: "idle" }
-  | { kind: "extending"; head: Head; direction: vec2; origin: vec2; castFrom: vec2 }
+  | {
+      kind: "extending";
+      head: Head;
+      direction: vec2;
+      mount: vec2;
+      sweptReach: number;
+      time: number;
+    }
   | { kind: "pulling"; hit: TerrainHit; latchLength: number; lastDistance: number }
   | { kind: "reeling"; gem: FungalGem; grip: vec2; normal: vec2; latchLength: number }
   | { kind: "retracting"; head: Head; remaining: number; direction: vec2 };
@@ -71,13 +86,16 @@ export class PlayerGun {
     const shot = this.shot;
     const incoming = shot.kind === "extending" && shot.head === "glove";
     if (!incoming && !(this.ready && this.aiming)) return false;
-    const from = incoming ? shot.castFrom : this.pivot.localToWorld([0, 0]);
+    const from = incoming
+      ? vec2.scaleAndAdd(vec2.create(), shot.mount, shot.direction, shot.sweptReach)
+      : this.pivot.localToWorld([0, 0]);
     if (vec2.distance(from, target.body.pos) > 480) return false;
     const angle = this.pivot.rotation;
     const direction = incoming
       ? shot.direction
       : vec2.fromValues(Math.cos(angle), Math.sin(angle));
-    const first = this.cast(from, direction, 480);
+    const range = incoming ? gun.maxReach - shot.sweptReach : gun.maxReach;
+    const first = this.cast(from, direction, Math.min(480, range));
     return first.kind === "robot" && first.target === target;
   }
 
@@ -94,6 +112,7 @@ export class PlayerGun {
   }
 
   beginAim(defaultDirection: ReadonlyVec2) {
+    if (!this.ready) return;
     const angle =
       this.lastShot?.angle ?? Math.atan2(defaultDirection[1], defaultDirection[0]);
     this.pivot.setOrientation(angle);
@@ -121,7 +140,7 @@ export class PlayerGun {
   }
 
   fire() {
-    if (!this.aim || !this.ready) return;
+    if (!this.ready || !this.aim) return;
     this.aim.fired = true;
     this.lastShot = {
       angle: this.pivot.rotation,
@@ -131,14 +150,26 @@ export class PlayerGun {
     const mount = this.pivot.localToWorld([0, 0]);
     const angle = this.pivot.rotation;
     const direction = vec2.fromValues(Math.cos(angle), Math.sin(angle));
-    const head = this.cast(mount, direction).kind === "robot" ? "glove" : "claw";
+    const head =
+      this.cast(mount, direction, gun.maxReach).kind === "robot" ? "glove" : "claw";
     this.muzzle.localToWorld(nose[head], this.tip);
     this.shot = {
       kind: "extending",
       head,
       direction,
-      origin: mount,
-      castFrom: vec2.clone(mount)
+      mount,
+      sweptReach: 0,
+      time: extensionTimeAt(vec2.distance(mount, this.tip))
+    };
+  }
+
+  private retract(head: Head, direction: vec2) {
+    const dock = this.muzzle.localToWorld(nose[head]);
+    this.shot = {
+      kind: "retracting",
+      head,
+      direction,
+      remaining: vec2.distance(dock, this.tip)
     };
   }
 
@@ -179,12 +210,26 @@ export class PlayerGun {
       shot.kind === "extending" || shot.kind === "retracting" ? shot.head : "claw";
     const dock = this.muzzle.localToWorld(nose[head]);
     if (shot.kind === "extending") {
-      // The first sweep includes the loaded head so a close surface still catches it.
-      const distance = vec2.distance(shot.castFrom, this.tip) + gun.extensionSpeed * dt;
-      const result = this.cast(shot.castFrom, shot.direction, distance);
+      // Sweep the tip in world space, including movement of the gun mount.
+      // On the first tick the sweep also covers the loaded barrel and head.
+      const mount = this.pivot.localToWorld([0, 0]);
+      const from = vec2.scaleAndAdd(
+        vec2.create(),
+        shot.mount,
+        shot.direction,
+        shot.sweptReach
+      );
+      shot.time = Math.min(extensionSeconds, shot.time + dt);
+      const reach = extensionAt(shot.time);
+      const end = vec2.scaleAndAdd(vec2.create(), mount, shot.direction, reach);
+      const travel = vec2.subtract(vec2.create(), end, from);
+      const distance = vec2.length(travel);
+      const result = this.cast(from, vec2.normalize(travel, travel), distance, "swept");
       vec2.copy(this.tip, result.point);
       if (result.kind === "clear") {
-        vec2.copy(shot.castFrom, result.point);
+        shot.sweptReach = reach;
+        shot.mount = mount;
+        if (shot.time >= extensionSeconds) this.retract(shot.head, shot.direction);
       } else if (
         shot.head === "claw" &&
         (result.kind === "clingable" || result.kind === "gem")
@@ -215,19 +260,18 @@ export class PlayerGun {
           };
         }
       } else {
-        if (shot.head === "glove" && result.kind === "robot")
+        if (shot.head === "glove" && result.kind === "robot") {
+          const hitReach = shot.sweptReach + (reach - shot.sweptReach) * result.fraction;
+          const mountVelocity = vec2.subtract(vec2.create(), mount, shot.mount);
+          vec2.scale(mountVelocity, mountVelocity, 1 / dt);
+          const velocity = tipVelocity(shot.direction, hitReach, mountVelocity);
           result.target.takePunch(
             this.owner,
-            shot.direction,
             result.point,
-            vec2.distance(shot.origin, result.point)
+            punchImpact(velocity, result.normal, result.target.body.vel)
           );
-        this.shot = {
-          kind: "retracting",
-          head: shot.head,
-          remaining: vec2.distance(dock, this.tip),
-          direction: shot.direction
-        };
+        }
+        this.retract(shot.head, shot.direction);
       }
     } else if (shot.kind === "pulling") {
       // Physics can slide the body along an existing contact without reporting a new hit.
@@ -256,7 +300,7 @@ export class PlayerGun {
   private drawSight(ctx: CanvasRenderingContext2D) {
     const [dx, dy, , , x, y] = this.pivot.renderWorldMatrix;
     const hit = this.aiming
-      ? this.cast(vec2.fromValues(x, y), vec2.fromValues(dx, dy))
+      ? this.cast(vec2.fromValues(x, y), vec2.fromValues(dx, dy), gun.maxReach)
       : null;
     const reach = this.muzzle.renderPosition[0];
     if (this.ready && reach > 0) {
@@ -267,7 +311,7 @@ export class PlayerGun {
       else drawGrappleHead(ctx, false);
       ctx.restore();
     }
-    if (!hit || hit.kind === "clear" || hit.kind === "miss") return;
+    if (!hit || hit.kind === "clear") return;
     ctx.translate(Math.hypot(hit.point[0] - x, hit.point[1] - y), 0);
     ctx.fillStyle = "#ff403d";
     ctx.shadowColor = ctx.fillStyle;
