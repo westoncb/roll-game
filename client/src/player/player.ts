@@ -397,7 +397,7 @@ export class Player implements Entity {
     this.launchCharge = this.jumpHeldSeconds = null;
     this.groundSpeed = 0;
     vec2.scaleAndAdd(this.body.vel, this.body.vel, normal, impulse);
-    const strength = Math.min(1, impulse / playerConfig.gun.punchImpulse);
+    const strength = impulse / playerConfig.gun.punchImpulse;
     this.screen.showImpact();
     this.events.punched(this, at, normal, strength);
     this.takeDamage(damage, attacker);

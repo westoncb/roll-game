@@ -38,11 +38,14 @@ export class PunchBurst {
     readonly target: Drawable2D,
     radius: number
   ) {
-    const duration = lerp(0.5, 0.76, strength);
+    // Use the same squared-speed response as damage across the full impulse range.
+    const intensity = strength ** 2;
+    const duration = lerp(0.18, 0.76, intensity);
     this.expiresAt = born + duration;
     const angle = Math.atan2(-direction[1], -direction[0]);
     const centerAtHit = vec2.scaleAndAdd(vec2.create(), at, direction, radius);
-    const count = strength > 0.55 ? 2 : 1;
+    const echoOpacity = Math.max(0, Math.min(1, (intensity - 0.55) / 0.3));
+    const count = echoOpacity > 0 ? 2 : 1;
     const phaseAtHit = Math.random() * tau;
 
     this.visual = new Drawable2D((ctx, { time }) => {
@@ -58,16 +61,16 @@ export class PunchBurst {
       );
       ctx.rotate(angle);
       ctx.lineCap = ctx.lineJoin = "round";
-      ctx.globalAlpha *= Math.min(
-        1 - diffuse,
-        (this.expiresAt - time) / knockoutFadeSeconds
-      );
+      const opacity =
+        ctx.globalAlpha *
+        lerp(0.44, 1, intensity) *
+        Math.min(1 - diffuse, (this.expiresAt - time) / knockoutFadeSeconds);
       ctx.setLineDash(diffuse > 0 ? [lerp(24, 4, diffuse), diffuse * 13] : []);
 
       for (let i = count - 1; i >= 0; i--) {
-        const r = radius + 2 + i * 14 + spread * (9 + strength * 14);
-        const span = (0.68 + strength * 0.39) * (1 - 0.16 * i) * (1 - 0.24 * diffuse);
-        const amplitude = (4 + strength * 4) * lerp(1, 0.18, diffuse);
+        const r = radius + 2 + i * 14 + spread * lerp(3, 23, intensity);
+        const span = lerp(0.28, 1.07, intensity) * (1 - 0.16 * i) * (1 - 0.24 * diffuse);
+        const amplitude = lerp(1.4, 8, intensity) * lerp(1, 0.18, diffuse);
         const path = ripple(
           r,
           span,
@@ -75,8 +78,9 @@ export class PunchBurst {
           phaseAtHit + age * tau * 6.5 - i * 1.3,
           echoAngles[i]
         );
-        const width = lerp(3.48, 5.64, strength) * (1 - 0.12 * i) * (1 - 0.55 * diffuse);
+        const width = lerp(1.5, 5.64, intensity) * (1 - 0.12 * i) * (1 - 0.55 * diffuse);
 
+        ctx.globalAlpha = opacity * (i === 0 ? 1 : echoOpacity);
         ctx.strokeStyle = i === 0 ? "#fff4c7" : "#ffc368";
         ctx.lineWidth = width;
         ctx.stroke(path);

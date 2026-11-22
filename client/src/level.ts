@@ -12,6 +12,7 @@ import { ParticleSystem } from "./engine/particles/system";
 import { stepPhysics } from "./engine/physics";
 import { Player, type PlayerEvents } from "./player/player";
 import type { BeamHit, CastBeam } from "./player/gun";
+import { maxPunchStrength } from "./player/grapple-motion";
 import { respawnGraceSeconds, rivalColors } from "./player/config";
 import { RivalController } from "./player/rival";
 import { FungalColony } from "./fungus/colony";
@@ -149,12 +150,13 @@ export class Level {
         const color = player === this.player ? "#ffaaa7" : "#82eddf";
         this.effects.add(new PointsPopup(points, color, at, this.time, this.size));
       },
-      punched: (victim, at, direction, strength) => {
+      punched: (victim, at, direction, impactStrength) => {
+        const strength = Math.min(1, impactStrength);
         shakeOnPunch(this.camera, this.time, direction, strength, victim === this.player);
         const burst = new PunchBurst(
           at,
           direction,
-          strength,
+          Math.min(1, impactStrength / maxPunchStrength),
           this.time,
           victim.visual,
           victim.body.radius
