@@ -1,18 +1,18 @@
 {
   "version": 1,
   "emitters": [{
-    "emission": { "kind": "burst", "count": 15 },
-    "pass": "behind",
+    "emission": { "kind": "burst", "count": 22 },
+    "pass": "front",
     "offset": [0, -3],
     "segment": [0, 6],
     "direction": [-1.48, 1.48],
-    "speed": [65, 200],
+    "speed": [90, 235],
     "drag": 3.8,
-    "lifetime": [0.22, 0.48],
-    "radius": [2.5, 5.5],
-    "sizeOverLife": [{ "at": 0, "value": 0.45 }, { "at": 0.32, "value": 1 }, { "at": 1, "value": 1.6 }],
-    "opacityOverLife": [{ "at": 0, "value": 0.75 }, { "at": 0.35, "value": 0.56 }, { "at": 1, "value": 0 }],
-    "colorOverLife": [{ "at": 0, "value": "#edccaa" }, { "at": 1, "value": "#9094a1" }],
-    "strength": { "amount": [0.13, 1], "speed": [0.48, 1], "size": [0.5, 1] }
+    "lifetime": [0.32, 0.58],
+    "radius": [4, 8],
+    "sizeOverLife": [{ "at": 0, "value": 0.68 }, { "at": 0.32, "value": 1 }, { "at": 1, "value": 1.6 }],
+    "opacityOverLife": [{ "at": 0, "value": 0.89 }, { "at": 0.35, "value": 0.68 }, { "at": 1, "value": 0 }],
+    "colorOverLife": [{ "at": 0, "value": "#ffe6bc" }, { "at": 1, "value": "#9094a1" }],
+    "strength": { "amount": [0.25, 1], "speed": [0.48, 1], "size": [0.7, 1] }
   }]
 }

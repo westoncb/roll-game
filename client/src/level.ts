@@ -116,8 +116,16 @@ export class Level {
         const color = player === this.player ? "#ffaaa7" : "#82eddf";
         this.effects.add(new PointsPopup(points, color, at, this.time, this.size));
       },
-      punched: (at, direction, strength) => {
-        this.effects.add(new PunchBurst(at, direction, strength, this.time));
+      punched: (victim, at, direction, strength) => {
+        const burst = new PunchBurst(
+          at,
+          direction,
+          strength,
+          this.time,
+          victim.visual,
+          victim.body.radius
+        );
+        this.effects.add(burst);
         this.particles.play(
           gameAssets.particles.get("punch-dust"),
           { kind: "world", position: at, angle: Math.atan2(-direction[1], -direction[0]) },
@@ -125,6 +133,10 @@ export class Level {
         );
       },
       defeated: (victim, attacker) => {
+        for (const effect of this.effects) {
+          if (effect instanceof PunchBurst && effect.target === victim.visual)
+            effect.fadeOnKnockout(this.time);
+        }
         this.shake = 6;
         this.particles.play(gameAssets.particles.get("impact-sparks"), {
           kind: "world",

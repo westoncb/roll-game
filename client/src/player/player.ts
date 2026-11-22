@@ -79,7 +79,7 @@ const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 
 export interface PlayerEvents {
   scored(player: Player, points: number, at: vec2): void;
-  punched(at: vec2, direction: vec2, strength: number): void;
+  punched(victim: Player, at: vec2, direction: vec2, strength: number): void;
   defeated(player: Player, attacker: Player | null): void;
 }
 
@@ -188,7 +188,6 @@ export class Player implements Entity {
   health = maxHealth;
   inFungus = false;
   private fungusAttacker: Player | null = null;
-  private hitFlash = 0;
   readonly home: vec2;
   respawnRemaining = 0;
   punchedBy: Player | null = null;
@@ -228,7 +227,6 @@ export class Player implements Entity {
 
   respawn(start: vec2, ground: GroundPolygon[]) {
     this.health = maxHealth;
-    this.hitFlash = 0;
     this.inFungus = false;
     this.fungusAttacker = null;
     this.punchedBy = null;
@@ -400,14 +398,9 @@ export class Player implements Entity {
     this.groundSpeed = 0;
     vec2.scaleAndAdd(this.body.vel, this.body.vel, normal, impulse);
     const strength = Math.min(1, impulse / playerConfig.gun.punchImpulse);
-    this.hitFlash = Math.max(this.hitFlash, lerp(0.2, 0.85, strength));
     this.screen.showImpact();
-    this.events.punched(at, normal, strength);
+    this.events.punched(this, at, normal, strength);
     this.takeDamage(damage, attacker);
-  }
-
-  update(dt: number) {
-    this.hitFlash = Math.max(0, this.hitFlash - dt / 0.15);
   }
 
   private get bootProgress() {
@@ -441,18 +434,17 @@ export class Player implements Entity {
   }
 
   private drawDamage(ctx: CanvasRenderingContext2D, time: number) {
-    if (!this.inFungus && !this.hitFlash) return;
-    const punch = this.hitFlash > 0;
-    const color = punch ? "#fff3cc" : "#f18edb";
+    if (!this.inFungus) return;
+    const color = "#f18edb";
     const size = shell.size + 2;
     ctx.beginPath();
     ctx.roundRect(-size / 2, -size / 2, size, size, shell.cornerRadius + 1);
     ctx.fillStyle = ctx.strokeStyle = ctx.shadowColor = color;
-    ctx.shadowBlur = punch ? 6 : 9;
-    ctx.globalAlpha *= punch ? this.hitFlash * 0.9 : 0.58 + 0.18 * Math.sin(time * 9);
+    ctx.shadowBlur = 9;
+    ctx.globalAlpha *= 0.58 + 0.18 * Math.sin(time * 9);
     ctx.lineWidth = 3;
     ctx.stroke();
-    ctx.globalAlpha *= punch ? 0.65 : 0.25;
+    ctx.globalAlpha *= 0.25;
     ctx.fill();
   }
 
@@ -486,12 +478,18 @@ export class Player implements Entity {
         (!reversing && Math.abs(this.groundSpeed) <= Math.abs(targetSpeed))
       )
         this.punchedBy = null;
-      const rate =
-        reversing || this.gun.aiming
-          ? movement.brakeDeceleration
-          : drive
-            ? movement.runAcceleration
-            : movement.coastDeceleration;
+      let rate: number = movement.coastDeceleration;
+      if (reversing || this.gun.aiming) rate = movement.brakeDeceleration;
+      else if (drive) {
+        const pushOffSpeed = drive * movement.pushOffSpeed * stride;
+        if (Math.abs(this.groundSpeed) < Math.abs(pushOffSpeed))
+          this.groundSpeed = pushOffSpeed;
+        const buildingSpeed = Math.abs(this.groundSpeed) < Math.abs(targetSpeed);
+        rate =
+          buildingSpeed && Math.abs(this.groundSpeed) < movement.startupEndSpeed * stride
+            ? movement.startupAcceleration
+            : movement.runAcceleration;
+      }
       this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * stride * dt);
       if (this.launchCharge === null) {
         const { support, travel, retainedSpeed, airTime } = advanceAlongSurface(

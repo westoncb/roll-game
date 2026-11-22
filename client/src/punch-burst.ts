@@ -2,71 +2,89 @@ import { vec2 } from "gl-matrix";
 import { Drawable2D } from "./engine/drawable";
 import { lerp, tau } from "./utils/math";
 
-// A short inked flash at the contact, followed by slivers peeling away from its tips.
+const echoAngles = [0, 0.22];
+const knockoutFadeSeconds = 0.08;
+
+// Each echo is a short patch of the struck face, in coordinates where +X points
+// out of the robot. The vibration dies away as the marks separate into wisps.
+function ripple(
+  radius: number,
+  halfAngle: number,
+  amplitude: number,
+  phase: number,
+  tilt: number
+) {
+  const path = new Path2D();
+  for (let i = 0; i <= 32; i++) {
+    const u = i / 32;
+    const angle = tilt + (2 * u - 1) * halfAngle;
+    const envelope = Math.sin(Math.PI * u);
+    const wobble = Math.sin(u * tau * 2.65 + phase) + 0.22 * Math.sin(u * tau * 3 - phase);
+    const r = radius + amplitude * envelope * wobble;
+    path.lineTo(r * Math.cos(angle), r * Math.sin(angle));
+  }
+  return path;
+}
+
 export class PunchBurst {
   readonly visual: Drawable2D;
-  readonly expiresAt: number;
+  expiresAt: number;
 
-  constructor(at: vec2, direction: vec2, strength: number, born: number) {
-    const duration = lerp(0.15, 0.29, strength);
+  constructor(
+    at: vec2,
+    direction: vec2,
+    strength: number,
+    born: number,
+    readonly target: Drawable2D,
+    radius: number
+  ) {
+    const duration = lerp(0.5, 0.76, strength);
     this.expiresAt = born + duration;
-    const radius = lerp(9, 43, strength);
-    const count = 5 + Math.round(4 * strength);
-    const flash = new Path2D();
-    const tips: { angle: number; length: number }[] = [];
-    for (let i = 0; i < count; i++) {
-      const angle = ((i + 0.35 * Math.random()) * tau) / count;
-      const dx = Math.cos(angle),
-        dy = Math.sin(angle);
-      // Compress the flash against the struck face. Longer points flare back and sideways.
-      const length = radius * (0.72 + 0.36 * Math.random()) * (1 - 0.38 * dx);
-      const notch = angle + tau / (2 * count);
-      const x = dx * length,
-        y = dy * length;
-      if (i === 0) flash.moveTo(x, y);
-      else flash.lineTo(x, y);
-      flash.lineTo(Math.cos(notch) * radius * 0.22, Math.sin(notch) * radius * 0.27);
-      if (i % 2 === 0) tips.push({ angle, length });
-    }
-    flash.closePath();
+    const angle = Math.atan2(-direction[1], -direction[0]);
+    const centerAtHit = vec2.scaleAndAdd(vec2.create(), at, direction, radius);
+    const count = strength > 0.55 ? 2 : 1;
+    const phaseAtHit = Math.random() * tau;
+
     this.visual = new Drawable2D((ctx, { time }) => {
-      const t = (time - born) / duration;
-      if (t < 0 || t >= 1) return;
-      if (t < 0.58) {
-        const pop =
-          t < 0.14 ? lerp(0.68, 1, t / 0.14) : 1 - 0.74 * ((t - 0.14) / 0.44) ** 2;
-        ctx.save();
-        ctx.scale(pop, pop);
-        ctx.strokeStyle = "#422b3a";
-        ctx.lineWidth = 1.3 + strength;
-        ctx.lineJoin = "round";
-        ctx.fillStyle = "#ffab62";
-        ctx.fill(flash);
-        ctx.stroke(flash);
-        ctx.scale(0.68, 0.68);
-        ctx.fillStyle = "#fff5cf";
-        ctx.fill(flash);
-        ctx.restore();
-      }
-      ctx.globalAlpha *= 1 - t * t;
-      ctx.fillStyle = "#ffdf96";
-      for (const tip of tips) {
-        ctx.save();
-        ctx.rotate(tip.angle);
-        const start = tip.length * (0.55 + 1.05 * t);
-        const span = radius * 0.42 * (1 - t);
-        const halfWidth = (0.8 + strength) * (1 - t);
-        ctx.beginPath();
-        ctx.moveTo(start, 0);
-        ctx.lineTo(start + span * 0.65, -halfWidth);
-        ctx.lineTo(start + span, 0);
-        ctx.lineTo(start + span * 0.52, halfWidth);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
+      const age = time - born;
+      if (age < 0 || time >= this.expiresAt) return;
+      const t = age / duration;
+      const diffuse = Math.max(0, (t - 0.48) / 0.52);
+      const spread = 1 - (1 - t) ** 2;
+      const follow = Math.min(1, age / 0.06);
+      ctx.translate(
+        lerp(centerAtHit[0], target.renderPosition[0], follow),
+        lerp(centerAtHit[1], target.renderPosition[1], follow)
+      );
+      ctx.rotate(angle);
+      ctx.lineCap = ctx.lineJoin = "round";
+      ctx.globalAlpha *= Math.min(
+        1 - diffuse,
+        (this.expiresAt - time) / knockoutFadeSeconds
+      );
+      ctx.setLineDash(diffuse > 0 ? [lerp(24, 4, diffuse), diffuse * 13] : []);
+
+      for (let i = count - 1; i >= 0; i--) {
+        const r = radius + 2 + i * 14 + spread * (9 + strength * 14);
+        const span = (0.68 + strength * 0.39) * (1 - 0.16 * i) * (1 - 0.24 * diffuse);
+        const amplitude = (4 + strength * 4) * lerp(1, 0.18, diffuse);
+        const path = ripple(
+          r,
+          span,
+          amplitude,
+          phaseAtHit + age * tau * 6.5 - i * 1.3,
+          echoAngles[i]
+        );
+        const width = lerp(3.48, 5.64, strength) * (1 - 0.12 * i) * (1 - 0.55 * diffuse);
+
+        ctx.strokeStyle = i === 0 ? "#fff4c7" : "#ffc368";
+        ctx.lineWidth = width;
+        ctx.stroke(path);
       }
     });
-    vec2.copy(this.visual.position, at);
-    this.visual.rotation = Math.atan2(direction[1], direction[0]);
+  }
+
+  fadeOnKnockout(time: number) {
+    this.expiresAt = Math.min(this.expiresAt, time + knockoutFadeSeconds);
   }
 }
