@@ -11,9 +11,13 @@ export type CameraShake = {
   frequency: number; // cycles per second
   /** A direction starts with a kick along that axis. Omit it for a rolling rumble. */
   direction?: ReadonlyVec2;
+  /** Relative amplitude of the vibration perpendicular to the main axis. */
+  crossAxis?: number;
+  /** Amplitude multiplier over the normalized lifetime [0, 1]. */
+  envelope?: (progress: number) => number;
 };
 
-type ShakePulse = Pick<CameraShake, "amplitude" | "duration" | "frequency"> & {
+type ShakePulse = Required<Omit<CameraShake, "direction">> & {
   start: number;
   axisX: number;
   axisY: number;
@@ -21,6 +25,7 @@ type ShakePulse = Pick<CameraShake, "amplitude" | "duration" | "frequency"> & {
 };
 
 const maxShakePixels = 14;
+const quadraticDecay = (progress: number) => (1 - progress) ** 2;
 
 // Screen coordinates are CSS pixels relative to the fitted canvas.
 export class Camera {
@@ -54,7 +59,17 @@ export class Camera {
   }
 
   /** Start a pulse on the same simulation clock used by sampleShake. */
-  shake({ amplitude, duration, frequency, direction }: CameraShake, time: number) {
+  shake(
+    {
+      amplitude,
+      duration,
+      frequency,
+      direction,
+      crossAxis = 0.25,
+      envelope = quadraticDecay
+    }: CameraShake,
+    time: number
+  ) {
     if (!(amplitude > 0 && duration > 0 && frequency > 0)) return;
     const directed = direction && (direction[0] !== 0 || direction[1] !== 0);
     const angle = directed ? Math.atan2(direction[1], direction[0]) : Math.random() * tau;
@@ -62,6 +77,8 @@ export class Camera {
       amplitude,
       duration,
       frequency,
+      crossAxis,
+      envelope,
       start: time,
       axisX: Math.cos(angle),
       axisY: Math.sin(angle),
@@ -80,12 +97,12 @@ export class Camera {
         continue;
       }
       if (age < 0 || reducedMotion) continue;
-      const envelope = pulse.amplitude * (1 - age / pulse.duration) ** 2;
+      const amplitude = pulse.amplitude * pulse.envelope(age / pulse.duration);
       const cycle = tau * pulse.frequency * age;
       const along = Math.sin(cycle + pulse.phase);
-      const across = 0.25 * Math.sin(cycle * 1.37);
-      x += envelope * (along * pulse.axisX - across * pulse.axisY);
-      y += envelope * (along * pulse.axisY + across * pulse.axisX);
+      const across = pulse.crossAxis * Math.sin(cycle * 1.37);
+      x += amplitude * (along * pulse.axisX - across * pulse.axisY);
+      y += amplitude * (along * pulse.axisY + across * pulse.axisX);
     }
     // Bound combined hits before scaling them to a smaller viewport.
     const scale =

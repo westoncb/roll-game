@@ -38,6 +38,37 @@ function inPlay(entity: Entity) {
   return !(entity instanceof Player && entity.respawnRemaining > 0);
 }
 
+function shakeOnPunch(
+  camera: Camera,
+  time: number,
+  direction: vec2,
+  strength: number,
+  hitYou: boolean
+) {
+  const gain = strength ** 0.75 * (hitYou ? 1 : 0.36);
+  camera.shake(
+    {
+      amplitude: 12 * gain,
+      duration: lerp(0.12, 0.18, strength),
+      frequency: 4.2,
+      direction,
+      crossAxis: 0
+    },
+    time
+  );
+  camera.shake(
+    {
+      amplitude: 8.5 * gain,
+      duration: (hitYou ? 0.48 : 0.26) * lerp(0.7, 1, strength),
+      frequency: 10.5,
+      crossAxis: 0.8,
+      // Hold the vibration through the shove, then smoothly taper its tail.
+      envelope: (t) => (1 - t * t) ** 2
+    },
+    time
+  );
+}
+
 export class Level {
   readonly particles = new ParticleSystem();
   private readonly effects = new Set<PointsPopup | PunchBurst>();
@@ -119,16 +150,7 @@ export class Level {
         this.effects.add(new PointsPopup(points, color, at, this.time, this.size));
       },
       punched: (victim, at, direction, strength) => {
-        const hitYou = victim === this.player;
-        this.camera.shake(
-          {
-            amplitude: (hitYou ? 10 : 2.2) * strength,
-            duration: lerp(0.16, 0.28, strength) * (hitYou ? 1 : 0.55),
-            frequency: hitYou ? 12 : 17,
-            direction
-          },
-          this.time
-        );
+        shakeOnPunch(this.camera, this.time, direction, strength, victim === this.player);
         const burst = new PunchBurst(
           at,
           direction,
