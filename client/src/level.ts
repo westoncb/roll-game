@@ -34,6 +34,7 @@ export type LevelData = {
 
 export type RoundResult = "player-contact" | "cleared";
 const respawnDelaySeconds = 2;
+const impactBorderFadeSeconds = 0.48;
 
 function inPlay(entity: Entity) {
   return !(entity instanceof Player && entity.respawnRemaining > 0);
@@ -84,6 +85,9 @@ export class Level {
   private readonly flowBackground = new FlowBackground();
   private previousTime = 0;
   private time = 0;
+  private previousImpactBorder = 0;
+  private impactBorder = 0;
+  private impactBorderHoldUntil = 0;
   readonly entities: Entity[];
   readonly fungalColonies: FungalColony[];
   private readonly domain: GrowthDomain;
@@ -152,11 +156,17 @@ export class Level {
       },
       punched: (victim, at, direction, impactStrength) => {
         const strength = Math.min(1, impactStrength);
-        shakeOnPunch(this.camera, this.time, direction, strength, victim === this.player);
+        const relativeImpulse = Math.min(1, impactStrength / maxPunchStrength);
+        const hitYou = victim === this.player;
+        if (hitYou && relativeImpulse >= this.impactBorder) {
+          this.impactBorder = relativeImpulse;
+          this.impactBorderHoldUntil = this.time + lerp(0.04, 0.1, relativeImpulse);
+        }
+        shakeOnPunch(this.camera, this.time, direction, strength, hitYou);
         const burst = new PunchBurst(
           at,
           direction,
-          Math.min(1, impactStrength / maxPunchStrength),
+          relativeImpulse,
           this.time,
           victim.visual,
           victim.body.radius
@@ -294,6 +304,14 @@ export class Level {
   update(input: InputState, dt: number) {
     this.previousTime = this.time;
     this.time += dt;
+    this.previousImpactBorder = this.impactBorder;
+    if (this.time > this.impactBorderHoldUntil) {
+      const fadeTime = Math.min(dt, this.time - this.impactBorderHoldUntil);
+      this.impactBorder = Math.max(
+        0,
+        this.impactBorder - fadeTime / impactBorderFadeSeconds
+      );
+    }
     for (const effect of this.effects) {
       if (effect.expiresAt <= this.previousTime) this.effects.delete(effect);
     }
@@ -337,6 +355,10 @@ export class Level {
     )
       this.result = "cleared";
     this.particles.step(dt);
+  }
+
+  impactBorderOpacity(alpha: number) {
+    return 0.76 * lerp(this.previousImpactBorder, this.impactBorder, alpha) ** 1.45;
   }
 
   draw(ctx: CanvasRenderingContext2D, alpha = 1, reducedMotion = false) {

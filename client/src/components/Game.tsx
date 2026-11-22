@@ -233,6 +233,7 @@ function startGame(
   };
   syncHud();
   let previousTime: number | undefined;
+  let previousBorderOpacity = 0;
   let accumulator = 0;
   let frameId: number | undefined;
 
@@ -257,7 +258,13 @@ function startGame(
       ctx.fillRect(0, 0, width, height);
       // Account for the whole-pixel rounding of each bitmap dimension.
       ctx.scale(width / camera.width, height / camera.height);
-      level.draw(ctx, accumulator / stepSeconds, reducedMotion.matches);
+      const alpha = accumulator / stepSeconds;
+      level.draw(ctx, alpha, reducedMotion.matches);
+      const borderOpacity = level.impactBorderOpacity(alpha);
+      if (borderOpacity !== previousBorderOpacity) {
+        host.style.setProperty("--impact-border-opacity", String(borderOpacity));
+        previousBorderOpacity = borderOpacity;
+      }
     }
     frameId = requestAnimationFrame(frame);
   };
@@ -277,6 +284,7 @@ function startGame(
     resume,
     stop() {
       pause();
+      host.style.removeProperty("--impact-border-opacity");
       stopInput();
       observer.disconnect();
       viewport?.removeEventListener("resize", fitHost);

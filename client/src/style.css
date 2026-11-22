@@ -16,6 +16,21 @@ html:has(#game-host) {
   background: #0a1017;
 }
 
+#game-host::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--impact-border-opacity, 0);
+  --edge: #ff3446, rgb(255 52 70 / 72%) 34%, rgb(255 52 70 / 24%) 68%, transparent;
+  background:
+    linear-gradient(to right, var(--edge)) left / 5vmin 100%,
+    linear-gradient(to left, var(--edge)) right / 5vmin 100%,
+    linear-gradient(to bottom, var(--edge)) top / 100% 5vmin,
+    linear-gradient(to top, var(--edge)) bottom / 100% 5vmin;
+  background-repeat: no-repeat;
+}
+
 #game-canvas {
   display: block;
   touch-action: pinch-zoom;
