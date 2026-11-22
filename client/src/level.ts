@@ -1,5 +1,6 @@
 import { vec2 } from "gl-matrix";
 import { gameAssets } from "./assets";
+import { Camera } from "./engine/camera";
 import { castCapsule, castSegment } from "./engine/collision";
 import { Drawable2D } from "./engine/drawable";
 import type { Entity } from "./engine/entity";
@@ -40,8 +41,8 @@ function inPlay(entity: Entity) {
 export class Level {
   readonly particles = new ParticleSystem();
   private readonly effects = new Set<PointsPopup | PunchBurst>();
-  shake = 0;
   readonly size: Readonly<{ width: number; height: number }>;
+  readonly camera: Camera;
   readonly player: Player;
   readonly rival?: Player;
   private readonly rivalController?: RivalController;
@@ -59,6 +60,7 @@ export class Level {
 
   constructor(data: LevelData) {
     this.size = { width: data.width, height: data.height };
+    this.camera = new Camera(this.size);
     const terrainSeed = crypto.getRandomValues(new Uint32Array(1))[0];
     this.ground = data.ground.map(({ vertices, style = "terrain" }, i) => {
       const polygon = new GroundPolygon(vertices.map(([x, y]) => vec2.fromValues(x, y)));
@@ -117,6 +119,16 @@ export class Level {
         this.effects.add(new PointsPopup(points, color, at, this.time, this.size));
       },
       punched: (victim, at, direction, strength) => {
+        const hitYou = victim === this.player;
+        this.camera.shake(
+          {
+            amplitude: (hitYou ? 10 : 2.2) * strength,
+            duration: lerp(0.16, 0.28, strength) * (hitYou ? 1 : 0.55),
+            frequency: hitYou ? 12 : 17,
+            direction
+          },
+          this.time
+        );
         const burst = new PunchBurst(
           at,
           direction,
@@ -137,7 +149,14 @@ export class Level {
           if (effect instanceof PunchBurst && effect.target === victim.visual)
             effect.fadeOnKnockout(this.time);
         }
-        this.shake = 6;
+        this.camera.shake(
+          {
+            amplitude: victim === this.player ? 6 : 1.4,
+            duration: 0.26,
+            frequency: 8
+          },
+          this.time
+        );
         this.particles.play(gameAssets.particles.get("impact-sparks"), {
           kind: "world",
           position: victim.body.pos,
@@ -251,7 +270,6 @@ export class Level {
   update(input: InputState, dt: number) {
     this.previousTime = this.time;
     this.time += dt;
-    this.shake = Math.max(0, this.shake - 25 * dt);
     for (const effect of this.effects) {
       if (effect.expiresAt <= this.previousTime) this.effects.delete(effect);
     }
@@ -300,6 +318,9 @@ export class Level {
   draw(ctx: CanvasRenderingContext2D, alpha = 1, reducedMotion = false) {
     if (this.rival && this.result) alpha = 1;
     const time = lerp(this.previousTime, this.time, alpha);
+    this.camera.sampleShake(time, reducedMotion);
+    ctx.save();
+    this.camera.applyTo(ctx);
     for (const entity of this.entities) entity.visual.samplePose(alpha);
     this.flowBackground.draw(ctx, this.size, reducedMotion ? 0 : time);
     this.groundVisual.render(ctx, alpha, time);
@@ -309,5 +330,6 @@ export class Level {
     }
     this.particles.draw(ctx, "front", alpha);
     for (const effect of this.effects) effect.visual.render(ctx, alpha, time);
+    ctx.restore();
   }
 }

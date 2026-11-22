@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Camera } from "../engine/camera";
 import { gameKeys, updateGame, type GameState } from "../game";
 import { listenForInput } from "../engine/input";
 import { loadLevel } from "../level-loader";
@@ -187,7 +186,8 @@ function startGame(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not create a 2D canvas context.");
 
-  const camera = new Camera(game.level.size);
+  const { level } = game;
+  const { camera } = level;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const viewport = window.visualViewport;
   const fitHost = () => {
@@ -210,7 +210,6 @@ function startGame(
   viewport?.addEventListener("scroll", fitHost);
 
   const { input, stopInput } = listenForInput(canvas, camera, gameKeys);
-  const { level } = game;
   let previousHud: Hud | undefined;
   const syncHud = () => {
     const you = level.player.score,
@@ -258,9 +257,7 @@ function startGame(
       ctx.fillRect(0, 0, width, height);
       // Account for the whole-pixel rounding of each bitmap dimension.
       ctx.scale(width / camera.width, height / camera.height);
-      camera.shake(reducedMotion.matches ? 0 : level.shake, now / 1000);
-      camera.applyTo(ctx);
-      game.level.draw(ctx, accumulator / stepSeconds, reducedMotion.matches);
+      level.draw(ctx, accumulator / stepSeconds, reducedMotion.matches);
     }
     frameId = requestAnimationFrame(frame);
   };
