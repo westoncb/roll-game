@@ -20,8 +20,7 @@ const hex = new GroundPolygon(
   Array.from({ length: 6 }, (_, i) => {
     const angle = (i * tau) / 6;
     return vec2.fromValues(Math.cos(angle), Math.sin(angle));
-  }),
-  0
+  })
 );
 
 function face(points: vec2[]) {

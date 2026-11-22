@@ -33,7 +33,7 @@ To try keyboard aiming, set `gunAim` to `"keyboard"` in `client/src/settings.ts`
 
 Each level lives in `levels/<id>.json` and can be committed to Git. IDs start with a lowercase letter or digit and can contain lowercase letters, digits, underscores, and hyphens, up to 100 characters.
 
-The game reads `playerStart` as an `[x, y]` pair in world units (positive Y points down). Each entry in `ground` has a `vertices` array tracing a simple polygon in either winding order. The last vertex connects to the first. The optional `gravityScale` defaults to 1.
+The game reads `playerStart` as an `[x, y]` pair in world units (positive Y points down). Each entry in `ground` has a `vertices` array tracing a simple polygon in either winding order. The last vertex connects to the first.
 
 Add a `rivalStart` coordinate pair to enable a duel. Levels that omit it use the solo rules.
 

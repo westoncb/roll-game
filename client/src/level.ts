@@ -3,7 +3,7 @@ import { gameAssets } from "./assets";
 import { castCapsule, castSegment } from "./engine/collision";
 import { Drawable2D } from "./engine/drawable";
 import type { Entity } from "./engine/entity";
-import { GravityField } from "./gravity-field";
+import { FlowBackground } from "./flow-background";
 import { GroundPolygon } from "./engine/ground";
 import type { InputState } from "./engine/input";
 import { lerp, tau } from "./utils/math";
@@ -19,7 +19,7 @@ import { GrowthDomain } from "./fungus/domain";
 import { PointsPopup } from "./points-popup";
 
 export type Point = [number, number];
-export type GroundData = { vertices: Point[]; gravityScale?: number; style?: string };
+export type GroundData = { vertices: Point[]; style?: string };
 export type LevelData = {
   width: number;
   height: number;
@@ -48,7 +48,7 @@ export class Level {
   result: RoundResult | null = null;
   readonly ground: GroundPolygon[];
   private readonly groundVisual = new Drawable2D();
-  private readonly gravityField: GravityField;
+  private readonly flowBackground = new FlowBackground();
   private previousTime = 0;
   private time = 0;
   readonly entities: Entity[];
@@ -60,23 +60,18 @@ export class Level {
   constructor(data: LevelData) {
     this.size = { width: data.width, height: data.height };
     const terrainSeed = crypto.getRandomValues(new Uint32Array(1))[0];
-    this.ground = data.ground.map(
-      ({ vertices, gravityScale = 1, style = "terrain" }, i) => {
-        const polygon = new GroundPolygon(
-          vertices.map(([x, y]) => vec2.fromValues(x, y)),
-          gravityScale
-        );
-        const visual = new Drawable2D(
-          {
-            shape: { kind: "polygon", vertices: polygon.vertices },
-            style: gameAssets.shapeStyles.get(style)
-          },
-          this.groundVisual
-        );
-        visual.drawSeed = (terrainSeed + i) >>> 0;
-        return polygon;
-      }
-    );
+    this.ground = data.ground.map(({ vertices, style = "terrain" }, i) => {
+      const polygon = new GroundPolygon(vertices.map(([x, y]) => vec2.fromValues(x, y)));
+      const visual = new Drawable2D(
+        {
+          shape: { kind: "polygon", vertices: polygon.vertices },
+          style: gameAssets.shapeStyles.get(style)
+        },
+        this.groundVisual
+      );
+      visual.drawSeed = (terrainSeed + i) >>> 0;
+      return polygon;
+    });
     const worldMin = vec2.create();
     const worldMax = vec2.fromValues(data.width, data.height);
     for (const polygon of this.ground) {
@@ -171,12 +166,6 @@ export class Level {
       );
       this.entities.push(this.rival);
     }
-    this.gravityField = new GravityField(
-      data.width,
-      data.height,
-      this.player.body.radius,
-      this.ground
-    );
   }
 
   private impact(position: vec2, direction: vec2, strength: number) {
@@ -307,11 +296,11 @@ export class Level {
     this.particles.step(dt);
   }
 
-  draw(ctx: CanvasRenderingContext2D, alpha = 1) {
+  draw(ctx: CanvasRenderingContext2D, alpha = 1, reducedMotion = false) {
     if (this.rival && this.result) alpha = 1;
     const time = lerp(this.previousTime, this.time, alpha);
     for (const entity of this.entities) entity.visual.samplePose(alpha);
-    this.gravityField.draw(ctx, time);
+    this.flowBackground.draw(ctx, this.size, reducedMotion ? 0 : time);
     this.groundVisual.render(ctx, alpha, time);
     this.particles.draw(ctx, "behind", alpha);
     for (const entity of this.entities) {

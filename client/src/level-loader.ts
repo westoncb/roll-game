@@ -16,9 +16,7 @@ function isGroundData(value: unknown): value is GroundData {
     Array.isArray(vertices) &&
     vertices.length >= 3 &&
     vertices.every(isPoint) &&
-    (!("style" in value) || typeof value.style === "string") &&
-    (!("gravityScale" in value) ||
-      (typeof value.gravityScale === "number" && Number.isFinite(value.gravityScale)))
+    (!("style" in value) || typeof value.style === "string")
   );
 }
 

@@ -2,7 +2,7 @@ import { vec2 } from "gl-matrix";
 import { castSegment, sweepCircle } from "../engine/collision";
 import type { GroundPolygon } from "../engine/ground";
 import type { InputState } from "../engine/input";
-import { sampleAirGravity } from "../engine/physics";
+import { gravityY } from "../engine/physics";
 import type { FungalColony } from "../fungus/colony";
 import { approach, tau } from "../utils/math";
 import { playerConfig, punchDamage } from "./config";
@@ -115,8 +115,7 @@ export class RivalController {
     vec2.scale(velocity, velocity, gun.punchSpeed);
     const at = vec2.clone(pos),
       end = vec2.create(),
-      step = vec2.create(),
-      gravity = vec2.create();
+      step = vec2.create();
     const dt = 1 / 30;
     let support: Support | null = null,
       speed = 0;
@@ -131,8 +130,7 @@ export class RivalController {
         vec2.set(velocity, -pose.normal[1] * speed, pose.normal[0] * speed);
         support = next.airTime ? null : next.support;
       } else {
-        sampleAirGravity(gravity, at, radius, this.ground);
-        vec2.scaleAndAdd(velocity, velocity, gravity, dt);
+        velocity[1] += gravityY * dt;
         vec2.scale(step, velocity, dt);
         const hit = sweepCircle(at, radius, step, this.ground);
         vec2.scaleAndAdd(end, at, step, hit?.fraction ?? 1);

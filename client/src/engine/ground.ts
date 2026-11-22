@@ -12,14 +12,12 @@ export type GroundEdge = {
 
 export class GroundPolygon {
   readonly vertices: vec2[];
-  readonly gravityScale: number;
   readonly edges: GroundEdge[];
 
-  constructor(vertices: vec2[], gravityScale: number) {
+  constructor(vertices: vec2[]) {
     vertices = vertices.filter(
       (v, i) => !vec2.exactEquals(v, vertices[(i + 1) % vertices.length])
     );
-    this.gravityScale = gravityScale;
     let twiceArea = 0;
     for (let i = 0; i < vertices.length; i++) {
       const a = vertices[i];
