@@ -23,13 +23,7 @@ import { PlayerScreen } from "./screen";
 import type { PunchImpact } from "./grapple-motion";
 import { PlayerGun, type CastBeam } from "./gun";
 import type { EffectPlayer } from "../engine/particles/system";
-import {
-  collectContacts,
-  gravityY,
-  moveAtVelocity,
-  stepPhysics,
-  PhysicsBody
-} from "../engine/physics";
+import { collectContacts, gravityY, stepPhysics, PhysicsBody } from "../engine/physics";
 import {
   halfSole,
   fungusDamagePerSecond,
@@ -179,7 +173,6 @@ export class Player implements Entity {
   private readonly lastJumpDirection = vec2.fromValues(0, -1);
   private landingVelocity?: vec2;
   private groundSpeed = 0;
-  private coastingFromCorner = false;
   readonly visual = new Drawable2D((ctx, { time }) => this.drawSpawnShield(ctx, time));
   readonly body = new PhysicsBody(this.visual.position, rollRadius);
   // The stance can crouch relative to the collider. Only the shell rolls.
@@ -239,7 +232,6 @@ export class Player implements Entity {
     this.support = null;
     this.groundSpeed = this.wallRight = 0;
     this.jumpHeldSeconds = this.launchCharge = null;
-    this.coastingFromCorner = false;
     this.landingVelocity = undefined;
     vec2.zero(this.body.vel);
     vec2.zero(this.body.accel);
@@ -408,7 +400,6 @@ export class Player implements Entity {
     this.punchedBy = attacker;
     if (this.gun.anchor) this.gun.finish();
     this.support = null;
-    this.coastingFromCorner = false;
     this.launchCharge = this.jumpHeldSeconds = null;
     this.groundSpeed = 0;
     vec2.scaleAndAdd(this.body.vel, this.body.vel, normal, impulse);
@@ -507,7 +498,7 @@ export class Player implements Entity {
       }
       this.groundSpeed = approach(this.groundSpeed, targetSpeed, rate * stride * dt);
       if (this.launchCharge === null) {
-        const { support, travel, retainedSpeed, airTime } = advanceAlongSurface(
+        const { support, travel, retainedSpeed } = advanceAlongSurface(
           this.support,
           this.groundSpeed,
           dt,
@@ -526,46 +517,33 @@ export class Player implements Entity {
         this.groundSpeed *= retainedSpeed;
         vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
         this.shell.rotation += travel / body.radius;
-        if (!airTime) {
-          vec2.zero(body.accel);
-          collectContacts(body, ground);
-          return;
-        }
-        this.coastingFromCorner = true;
-        dt = airTime;
-      } else {
-        vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
-        const launchSpeed = lerp(jump.tapSpeed, jump.fullSpeed, this.launchCharge);
-        // Push back along the crouch the grips actually allowed. A tap can have no pose yet.
-        const offset = this.stance.position;
-        const depth = vec2.length(offset);
-        const direction =
-          this.launchCharge > 0 && depth > 0.0001
-            ? vec2.scale(vec2.create(), offset, -1 / depth)
-            : this.pushOffDirection(this.support);
-        vec2.scaleAndAdd(body.vel, body.vel, direction, launchSpeed);
-        vec2.copy(this.lastJumpDirection, direction);
+        vec2.zero(body.accel);
+        collectContacts(body, ground);
+        return;
       }
+      vec2.set(body.vel, -normal[1] * this.groundSpeed, normal[0] * this.groundSpeed);
+      const launchSpeed = lerp(jump.tapSpeed, jump.fullSpeed, this.launchCharge);
+      // Push back along the crouch the grips actually allowed. A tap can have no pose yet.
+      const offset = this.stance.position;
+      const depth = vec2.length(offset);
+      const direction =
+        this.launchCharge > 0 && depth > 0.0001
+          ? vec2.scale(vec2.create(), offset, -1 / depth)
+          : this.pushOffDirection(this.support);
+      vec2.scaleAndAdd(body.vel, body.vel, direction, launchSpeed);
+      vec2.copy(this.lastJumpDirection, direction);
       this.support = null;
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;
     if (pull) {
       this.punchedBy = null;
-      this.coastingFromCorner = false;
       vec2.copy(body.vel, pull);
       vec2.zero(body.accel);
     } else vec2.set(body.accel, 0, gravityY);
     const from = this.support;
-    // Sweep along the departure tangent before gravity bends the flight. Applying
-    // gravity first would aim the initial sweep straight back into the lip.
-    const hit = this.coastingFromCorner
-      ? moveAtVelocity(body, ground, dt)
-      : stepPhysics(body, ground, dt, from && surfaceNormal(from, body.radius));
-    if (this.coastingFromCorner)
-      vec2.scaleAndAdd(body.vel, body.vel, body.accel, dt * (hit?.fraction ?? 1));
+    const hit = stepPhysics(body, ground, dt, from && surfaceNormal(from, body.radius));
     this.support = from && supportOnEdge(body.pos, body.radius, from.edge);
     this.land(ground);
-    if (this.support) this.coastingFromCorner = false;
     this.steerOnLanding();
     if (pull && this.support && (hit || !from)) this.gun.finish();
   }

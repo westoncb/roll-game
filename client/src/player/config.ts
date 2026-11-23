@@ -49,8 +49,6 @@ export const playerConfig = {
   },
   movement: {
     topSpeed: 660,
-    // Tangential speed that breaks grip on a 90-degree outside corner.
-    cornerReleaseSpeed: 500,
     maxStepDustStrength: 0.35,
     pushOffSpeed: 48,
     startupEndSpeed: 160,

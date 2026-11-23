@@ -32,10 +32,6 @@ export function stepPhysics(
     const along = -supportNormal[1] * body.vel[0] + supportNormal[0] * body.vel[1];
     vec2.set(body.vel, -supportNormal[1] * along, supportNormal[0] * along);
   }
-  return moveAtVelocity(body, ground, dt);
-}
-
-export function moveAtVelocity(body: PhysicsBody, ground: GroundPolygon[], dt: number) {
   const travel = vec2.scale(vec2.create(), body.vel, dt);
   const hit = sweepCircle(body.pos, body.radius, travel, ground);
   vec2.scaleAndAdd(body.pos, body.pos, travel, hit?.fraction ?? 1);

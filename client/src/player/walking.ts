@@ -1,7 +1,6 @@
 import { vec2 } from "gl-matrix";
 import { nearbyEdges, nearestBoundary, type GroundContact } from "../engine/collision";
 import type { GroundEdge, GroundPolygon } from "../engine/ground";
-import { playerConfig } from "./config";
 import { angleDifference, closestPointOnSegment } from "../utils/math";
 
 // An edge offset is measured along its tangent. A corner offset is measured
@@ -165,23 +164,6 @@ export function advanceAlongSurface(
       break;
     }
     const available = direction > 0 ? end - support.offset : support.offset - start;
-    if (support.kind === "corner") {
-      // Turning through θ changes velocity by 2 |v| sin(θ/2). Compare the
-      // remaining bend to the grip needed for a right angle at the reference speed.
-      const turn = Math.max(0, available) / radius;
-      const currentSpeed = Math.abs(speed) * retainedSpeed;
-      if (
-        currentSpeed * Math.sin(turn / 2) * Math.SQRT2 >=
-        playerConfig.movement.cornerReleaseSpeed
-      ) {
-        return {
-          support,
-          travel: direction * travelled,
-          retainedSpeed,
-          airTime: remaining / currentSpeed
-        };
-      }
-    }
     const step = Math.max(0, Math.min(remaining, available));
     const at = (travel: number): Support => ({
       ...support,
@@ -232,5 +214,5 @@ export function advanceAlongSurface(
     remaining *= carry;
   }
   if (remaining > 0.000001) retainedSpeed = 0;
-  return { support, travel: direction * travelled, retainedSpeed, airTime: 0 };
+  return { support, travel: direction * travelled, retainedSpeed };
 }

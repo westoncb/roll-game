@@ -130,11 +130,9 @@ export class RivalController {
         speed = approach(speed, 0, playerConfig.movement.coastDeceleration * dt);
         if (!speed) break;
         const next = advanceAlongSurface(support, speed, dt, radius, this.ground);
-        const pose = surfacePose(next.support, radius);
-        vec2.copy(end, pose.pos);
+        support = next.support;
+        vec2.copy(end, surfacePose(support, radius).pos);
         speed *= next.retainedSpeed;
-        vec2.set(velocity, -pose.normal[1] * speed, pose.normal[0] * speed);
-        support = next.airTime ? null : next.support;
       } else {
         velocity[1] += gravityY * dt;
         vec2.scale(step, velocity, dt);
