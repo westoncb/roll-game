@@ -178,7 +178,7 @@ export class FungalGem implements Entity {
     const hit = this.cast(trip.previousCenter, relativeEnd, trip.receiver.body.radius);
     vec2.scaleAndAdd(pos, pos, travel, hit?.fraction ?? 1);
     if (hit) {
-      trip.receiver.award("gem", pos);
+      trip.receiver.award("gem");
       if (this.colony.tuning.gemCollectSeconds === 0) {
         this.trip = null;
         return true;

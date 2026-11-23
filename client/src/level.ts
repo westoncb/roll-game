@@ -18,7 +18,8 @@ import { RivalController } from "./player/rival";
 import { FungalColony } from "./fungus/colony";
 import type { ColonyData } from "./fungus/config";
 import { GrowthDomain } from "./fungus/domain";
-import { PointsPopup } from "./points-popup";
+import { HealthPopup } from "./health-popup";
+import { RobotHud } from "./robot-hud";
 import { PunchBurst } from "./punch-burst";
 
 export type Point = [number, number];
@@ -73,7 +74,8 @@ function shakeOnPunch(
 
 export class Level {
   readonly particles = new ParticleSystem();
-  private readonly effects = new Set<PointsPopup | PunchBurst>();
+  private readonly effects = new Set<HealthPopup | PunchBurst>();
+  private readonly readouts = new Map<Player, RobotHud>();
   readonly size: Readonly<{ width: number; height: number }>;
   readonly camera: Camera;
   readonly player: Player;
@@ -88,6 +90,8 @@ export class Level {
   private previousImpactBorder = 0;
   private impactBorder = 0;
   private impactBorderHoldUntil = 0;
+  private previousFungalExposure = 0;
+  private fungalExposure = 0;
   readonly entities: Entity[];
   readonly fungalColonies: FungalColony[];
   private readonly domain: GrowthDomain;
@@ -150,10 +154,9 @@ export class Level {
         return first ?? { kind: "clear", point: to };
       };
     const events: PlayerEvents = {
-      scored: (player, points, at) => {
-        const color = player === this.player ? "#ffaaa7" : "#82eddf";
-        this.effects.add(new PointsPopup(points, color, at, this.time, this.size));
-      },
+      scored: (player, points) => this.readouts.get(player)!.scored(points, this.time),
+      healthChanged: (player, delta, source) =>
+        this.readouts.get(player)!.healthChanged(delta, source, this.time),
       punched: (victim, at, direction, impactStrength) => {
         const strength = Math.min(1, impactStrength);
         const relativeImpulse = Math.min(1, impactStrength / maxPunchStrength);
@@ -196,7 +199,7 @@ export class Level {
           position: victim.body.pos,
           angle: Math.atan2(victim.body.vel[1], victim.body.vel[0])
         });
-        attacker?.award("knockout", victim.body.pos);
+        attacker?.award("knockout");
         victim.punchedBy = null;
         if (this.rival) victim.respawnRemaining = respawnDelaySeconds;
         else this.result = "player-contact";
@@ -229,10 +232,19 @@ export class Level {
       );
       this.entities.push(this.rival);
     }
+    for (const player of [this.player, this.rival]) {
+      if (player)
+        this.readouts.set(
+          player,
+          new RobotHud(player, player === this.player, this.size, (popup) =>
+            this.effects.add(popup)
+          )
+        );
+    }
   }
 
   private resolveContact(actor: Player, from: vec2, dt: number) {
-    if (!actor.health) return;
+    if (!actor.health) return 0;
     const { pos, radius } = actor.body;
     if (actor.spawnProtection) {
       // Only a robot that had to spawn inside fungus waits for a clear position.
@@ -240,7 +252,7 @@ export class Level {
         if (!this.fungalColonies.some((c) => c.playerContact(pos, pos, radius)))
           actor.spawnProtection = respawnGraceSeconds;
       } else actor.spawnProtection = Math.max(0, actor.spawnProtection - dt);
-      return;
+      return 0;
     }
     // Merge the exposed parts of this tick so overlapping colonies drain at one rate.
     const intervals: { start: number; end: number }[] = [];
@@ -259,6 +271,7 @@ export class Level {
       end = Math.max(end, interval.end);
     }
     actor.exposeToFungus(covered * dt, end === 1);
+    return covered;
   }
 
   private spawnPosition(actor: Player, opponent: Player) {
@@ -304,6 +317,8 @@ export class Level {
   update(input: InputState, dt: number) {
     this.previousTime = this.time;
     this.time += dt;
+    this.previousFungalExposure = this.fungalExposure;
+    this.fungalExposure = 0;
     this.previousImpactBorder = this.impactBorder;
     if (this.time > this.impactBorderHoldUntil) {
       const fadeTime = Math.min(dt, this.time - this.impactBorderHoldUntil);
@@ -340,7 +355,7 @@ export class Level {
       else if (entity.body) stepPhysics(entity.body, this.ground, dt);
     }
     if (!this.result) {
-      this.resolveContact(this.player, this.playerFrom, dt);
+      this.fungalExposure = this.resolveContact(this.player, this.playerFrom, dt);
       if (this.rival) this.resolveContact(this.rival, this.rivalFrom, dt);
     }
     for (const entity of active) {
@@ -354,6 +369,8 @@ export class Level {
       this.fungalColonies.every((c) => !c.hasUncollectedGems)
     )
       this.result = "cleared";
+    for (const hud of this.readouts.values())
+      hud.flushFungalDamage(this.time, !!this.result);
     this.particles.step(dt);
   }
 
@@ -361,10 +378,20 @@ export class Level {
     return 0.76 * lerp(this.previousImpactBorder, this.impactBorder, alpha) ** 1.45;
   }
 
+  fungalExposureAt(alpha: number) {
+    if (this.result || !this.player.health || this.player.spawnProtection) return 0;
+    return lerp(this.previousFungalExposure, this.fungalExposure, alpha);
+  }
+
   draw(ctx: CanvasRenderingContext2D, alpha = 1, reducedMotion = false) {
     if (this.rival && this.result) alpha = 1;
     const time = lerp(this.previousTime, this.time, alpha);
-    this.camera.sampleShake(time, reducedMotion);
+    const exposure = this.fungalExposureAt(alpha);
+    this.camera.sampleShake(
+      time,
+      reducedMotion,
+      exposure > 0 ? { amplitude: 5.5 * exposure, frequency: 9 } : undefined
+    );
     ctx.save();
     this.camera.applyTo(ctx);
     for (const entity of this.entities) entity.visual.samplePose(alpha);
@@ -376,6 +403,11 @@ export class Level {
     }
     this.particles.draw(ctx, "front", alpha);
     for (const effect of this.effects) effect.visual.render(ctx, alpha, time);
+    const largestDuelScore = this.rival
+      ? Math.max(this.player.score, this.rival.score)
+      : undefined;
+    for (const hud of this.readouts.values())
+      hud.draw(ctx, time, this.camera.zoom, reducedMotion, largestDuelScore);
     ctx.restore();
   }
 }

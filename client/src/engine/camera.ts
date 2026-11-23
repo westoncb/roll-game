@@ -86,9 +86,19 @@ export class Camera {
     });
   }
 
-  sampleShake(time: number, reducedMotion = false) {
+  sampleShake(
+    time: number,
+    reducedMotion = false,
+    rumble?: Pick<CameraShake, "amplitude" | "frequency" | "crossAxis">
+  ) {
     let x = 0,
       y = 0;
+    // A sustained rumble shares the simulation clock and mixes with one-shot impacts.
+    if (rumble && !reducedMotion) {
+      const cycle = tau * rumble.frequency * time;
+      x = rumble.amplitude * Math.sin(cycle);
+      y = rumble.amplitude * (rumble.crossAxis ?? 0.75) * Math.sin(cycle * 1.37);
+    }
     for (let i = this.pulses.length - 1; i >= 0; i--) {
       const pulse = this.pulses[i];
       const age = time - pulse.start;

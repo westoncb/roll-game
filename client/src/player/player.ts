@@ -33,6 +33,7 @@ import {
 import {
   halfSole,
   fungusDamagePerSecond,
+  gemHealing,
   knockoutPoints,
   maxHealth,
   legSpacing,
@@ -77,8 +78,13 @@ const shellShape: StyledShape = {
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.
 const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
 
+export type HealthSource =
+  | { kind: "punch"; direction: vec2; strength: number }
+  | { kind: "gem" | "fungus" };
+
 export interface PlayerEvents {
-  scored(player: Player, points: number, at: vec2): void;
+  scored(player: Player, points: number): void;
+  healthChanged(player: Player, delta: number, source: HealthSource): void;
   punched(victim: Player, at: vec2, direction: vec2, strength: number): void;
   defeated(player: Player, attacker: Player | null): void;
 }
@@ -366,24 +372,33 @@ export class Player implements Entity {
     };
   }
 
-  award(kind: "gem" | "knockout", at: vec2) {
-    if (kind === "gem") this.gems++;
-    else this.knockouts++;
-    this.events.scored(this, kind === "gem" ? 1 : knockoutPoints, at);
+  award(kind: "gem" | "knockout") {
+    if (kind === "gem") {
+      this.gems++;
+      this.changeHealth(gemHealing, { kind: "gem" }, null);
+    } else this.knockouts++;
+    this.events.scored(this, kind === "gem" ? 1 : knockoutPoints);
   }
 
-  private takeDamage(amount: number, attacker: Player | null) {
-    this.health = Math.max(0, this.health - amount);
-    if (this.health < 1e-6) {
-      this.health = 0;
-      this.events.defeated(this, attacker);
-    }
+  private changeHealth(delta: number, source: HealthSource, attacker: Player | null) {
+    if (!this.health) return;
+    const before = this.health;
+    this.health = Math.max(0, Math.min(maxHealth, before + delta));
+    if (this.health < 1e-6) this.health = 0;
+    if (this.health === before) return;
+    this.events.healthChanged(this, this.health - before, source);
+    if (!this.health) this.events.defeated(this, attacker);
   }
 
   exposeToFungus(seconds: number, touchingAtEnd: boolean) {
     // Keep credit for the same exposure even if the knockback stops inside the colony.
     if (!this.inFungus) this.fungusAttacker = this.punchedBy;
-    if (seconds > 0) this.takeDamage(fungusDamagePerSecond * seconds, this.fungusAttacker);
+    if (seconds > 0)
+      this.changeHealth(
+        -fungusDamagePerSecond * seconds,
+        { kind: "fungus" },
+        this.fungusAttacker
+      );
     this.inFungus = touchingAtEnd && this.health > 0;
     if (!this.inFungus) this.fungusAttacker = null;
   }
@@ -400,7 +415,7 @@ export class Player implements Entity {
     const strength = impulse / playerConfig.gun.punchImpulse;
     this.screen.showImpact();
     this.events.punched(this, at, normal, strength);
-    this.takeDamage(damage, attacker);
+    this.changeHealth(-damage, { kind: "punch", direction: normal, strength }, attacker);
   }
 
   private get bootProgress() {

@@ -3,7 +3,7 @@ import { gameKeys, updateGame, type GameState } from "../game";
 import { listenForInput } from "../engine/input";
 import { loadLevel } from "../level-loader";
 import type { Level } from "../level";
-import { knockoutPoints, maxHealth } from "../player/config";
+import { approach } from "../utils/math";
 
 type Hud = {
   you: number;
@@ -37,39 +37,12 @@ function playHint({ player, rival }: Level) {
   return null;
 }
 
-function RobotVitals({
-  team,
-  score,
-  health
-}: {
-  team: "you" | "rival";
-  score: number;
-  health: number;
-}) {
-  const name = team === "you" ? "You" : "Rival";
-  const fill = { transform: `scaleX(${health / maxHealth})` };
-  return (
-    <div className={`team-score ${team}`}>
-      <div className="score-line">
-        <span>{name}</span>
-        <b aria-label={`${name}, ${score} points`}>{score}</b>
-      </div>
-      <div className="health-line">
-        <div
-          className="health-track"
-          role="meter"
-          aria-label={`${name === "You" ? "Your" : "Rival"} health`}
-          aria-valuemin={0}
-          aria-valuemax={maxHealth}
-          aria-valuenow={health}
-        >
-          <span className="health-trail" style={fill} />
-          <span className="health-fill" style={fill} />
-        </div>
-        <span className="health-value">{health} HP</span>
-      </div>
-    </div>
-  );
+function canvasLabel(hud: Hud | null) {
+  if (!hud) return "Game canvas";
+  const you = `You: ${hud.you} points, ${hud.health} health.`;
+  const rival =
+    hud.rival === null ? "" : ` Rival: ${hud.rival} points, ${hud.rivalHealth} health.`;
+  return `Game canvas. ${you}${rival}`;
 }
 
 export function Game() {
@@ -131,18 +104,9 @@ export function Game() {
           Could not start the game. {error}
         </p>
       )}
-      <canvas id="game-canvas" ref={canvasRef} tabIndex={0} aria-label="Game canvas" />
-      {hud && (
-        <div className="duel-score" aria-label="Score and health">
-          <RobotVitals team="you" score={hud.you} health={hud.health} />
-          {hud.rival !== null && (
-            <>
-              <RobotVitals team="rival" score={hud.rival} health={hud.rivalHealth} />
-              <span className="score-rules">Gem +1 · Knockout +{knockoutPoints}</span>
-            </>
-          )}
-        </div>
-      )}
+      <canvas id="game-canvas" ref={canvasRef} tabIndex={0} aria-label={canvasLabel(hud)} />
+      <div className="damage-border fungal-border" aria-hidden="true" />
+      <div className="damage-border punch-border" aria-hidden="true" />
       {hud?.hint && !hud.result && (
         <div className="duel-hint" role="status">
           {hud.hint}
@@ -234,11 +198,13 @@ function startGame(
   syncHud();
   let previousTime: number | undefined;
   let previousBorderOpacity = 0;
+  let fungalBorderStrength = 0;
   let accumulator = 0;
   let frameId: number | undefined;
 
   const frame = (now: number) => {
-    accumulator += Math.min(now - (previousTime ?? now), 50) / 1000;
+    const frameSeconds = Math.min(now - (previousTime ?? now), 50) / 1000;
+    accumulator += frameSeconds;
     previousTime = now;
     while (accumulator >= stepSeconds) {
       updateGame(game, input, stepSeconds);
@@ -265,6 +231,16 @@ function startGame(
         host.style.setProperty("--impact-border-opacity", String(borderOpacity));
         previousBorderOpacity = borderOpacity;
       }
+      const fungalExposure = level.fungalExposureAt(alpha);
+      if (fungalBorderStrength !== fungalExposure) {
+        const fadeSeconds = fungalExposure > fungalBorderStrength ? 0.18 : 0.32;
+        fungalBorderStrength = approach(
+          fungalBorderStrength,
+          fungalExposure,
+          frameSeconds / fadeSeconds
+        );
+        host.style.setProperty("--fungal-border-strength", String(fungalBorderStrength));
+      }
     }
     frameId = requestAnimationFrame(frame);
   };
@@ -285,6 +261,7 @@ function startGame(
     stop() {
       pause();
       host.style.removeProperty("--impact-border-opacity");
+      host.style.removeProperty("--fungal-border-strength");
       stopInput();
       observer.disconnect();
       viewport?.removeEventListener("resize", fitHost);

@@ -1,6 +1,7 @@
 import { tau } from "../utils/math";
 
 export const knockoutPoints = 10;
+export const gemHealing = 10;
 export const maxHealth = 100;
 export const respawnGraceSeconds = 0.75;
 export const fungusDamagePerSecond = 36;
