@@ -90,7 +90,7 @@ export class PlayerScreen extends Drawable2D {
   private displayMode(): ScreenMode {
     if (this.bootProgress !== null) return "boot";
     if (this.time < this.impactUntil) return "flightStatic";
-    if (this.gun.showingSight) return "sight";
+    if (!this.gun.ready) return "sight";
     if (this.charge > 0) return "chargeScope";
     if (this.time - this.lastStaticTime < staticHoldSeconds + staticFadeSeconds)
       return "flightStatic";

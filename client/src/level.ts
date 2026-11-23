@@ -140,7 +140,7 @@ export class Level {
         if (target && !target.respawnRemaining && !target.spawnProtection) {
           const { pos, radius } = target.body;
           // Sweep the flying tip against a moving robot in its end-of-tick frame.
-          // Sight and AI probes sample only the current pose.
+          // Head selection and AI probes sample the current pose.
           const previous = target === this.player ? this.playerFrom : this.rivalFrom;
           const drift =
             robotMotion === "swept" ? vec2.subtract(vec2.create(), pos, previous) : null;

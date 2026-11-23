@@ -9,7 +9,7 @@ import {
   tipVelocity
 } from "./grapple-motion";
 import { playerConfig } from "./config";
-import { approach, tau } from "../utils/math";
+import { approach } from "../utils/math";
 import type { FungalGem } from "../fungus/gem";
 import type { Player } from "./player";
 
@@ -24,6 +24,7 @@ export type CastBeam = (
   distance: number,
   robotMotion?: "swept"
 ) => BeamHit | { kind: "clear"; point: vec2 };
+export type HoverTarget = Extract<BeamHit["kind"], "gem" | "robot">;
 
 const gun = playerConfig.gun;
 type Head = "claw" | "glove";
@@ -43,8 +44,6 @@ type Shot =
   | { kind: "retracting"; head: Head; remaining: number; direction: vec2 };
 
 export class PlayerGun {
-  private aim: { rightTurn: number; target: vec2 | null; fired: boolean } | null = null;
-  private lastShot: { angle: number; position: vec2 } | null = null;
   private shot: Shot = { kind: "idle" };
   private deploying = false;
   private readonly pivot: Drawable2D;
@@ -61,17 +60,13 @@ export class PlayerGun {
     this.pivot = new Drawable2D(undefined, stance);
     this.pivot.rotation = -Math.PI / 2;
     this.muzzle = new Drawable2D((ctx) => this.drawBarrel(ctx), this.pivot);
-    new Drawable2D((ctx) => this.drawSight(ctx), this.pivot);
   }
 
-  get aiming() {
-    return this.aim !== null;
+  get phase() {
+    return this.shot.kind;
   }
   get ready() {
-    return this.shot.kind === "idle";
-  }
-  get showingSight() {
-    return this.aiming || this.shot.kind !== "idle" || this.muzzle.position[0] > 0;
+    return this.phase === "idle";
   }
   get renderAngle() {
     const matrix = this.pivot.renderWorldMatrix;
@@ -84,18 +79,19 @@ export class PlayerGun {
   threatens(target: Player) {
     if (this.owner.respawnRemaining) return false;
     const shot = this.shot;
-    const incoming = shot.kind === "extending" && shot.head === "glove";
-    if (!incoming && !(this.ready && this.aiming)) return false;
-    const from = incoming
-      ? vec2.scaleAndAdd(vec2.create(), shot.mount, shot.direction, shot.sweptReach)
-      : this.pivot.localToWorld([0, 0]);
+    if (shot.kind !== "extending" || shot.head !== "glove") return false;
+    const from = vec2.scaleAndAdd(
+      vec2.create(),
+      shot.mount,
+      shot.direction,
+      shot.sweptReach
+    );
     if (vec2.distance(from, target.body.pos) > 480) return false;
-    const angle = this.pivot.rotation;
-    const direction = incoming
-      ? shot.direction
-      : vec2.fromValues(Math.cos(angle), Math.sin(angle));
-    const range = incoming ? gun.maxReach - shot.sweptReach : gun.maxReach;
-    const first = this.cast(from, direction, Math.min(480, range));
+    const first = this.cast(
+      from,
+      shot.direction,
+      Math.min(480, gun.maxReach - shot.sweptReach)
+    );
     return first.kind === "robot" && first.target === target;
   }
 
@@ -111,48 +107,37 @@ export class PlayerGun {
     return vec2.scale(toAnchor, toAnchor, gun.pullSpeed / distance);
   }
 
-  beginAim(defaultDirection: ReadonlyVec2) {
+  private aimAt(target: ReadonlyVec2) {
+    const mount = this.pivot.localToWorld([0, 0]);
+    const direction = vec2.subtract(vec2.create(), target, mount);
+    if (!vec2.squaredLength(direction)) return null;
+    vec2.normalize(direction, direction);
+    return { mount, direction, hit: this.cast(mount, direction, gun.maxReach) };
+  }
+
+  hoverTarget(point: vec2): HoverTarget | null {
+    const hit = this.aimAt(point)?.hit;
+    // The shot may pass through the cursor and hit something farther along the ray.
+    if (hit?.kind === "gem" && hit.gem.cast(point, point)) return "gem";
+    if (hit?.kind === "robot") {
+      const { pos, radius } = hit.target.body;
+      if (vec2.squaredDistance(point, pos) <= radius * radius) return "robot";
+    }
+    return null;
+  }
+
+  fireAt(target: ReadonlyVec2) {
     if (!this.ready) return;
-    const angle =
-      this.lastShot?.angle ?? Math.atan2(defaultDirection[1], defaultDirection[0]);
-    this.pivot.setOrientation(angle);
-    this.aim = { rightTurn: Math.sin(angle) > 1e-6 ? -1 : 1, target: null, fired: false };
-  }
-
-  pointAt(target: vec2 | null) {
-    if (!this.aim || !target) return;
-    this.aim.target = target;
-    const mount = this.pivot.localToWorld([0, 0]);
-    const dx = target[0] - mount[0],
-      dy = target[1] - mount[1];
-    if (dx || dy) this.pivot.setOrientation(Math.atan2(dy, dx));
-  }
-
-  turn(horizontal: number, dt: number) {
-    if (!this.aim || !horizontal) return;
-    this.aim.target = null;
-    this.pivot.rotation += horizontal * this.aim.rightTurn * gun.aimSpeed * dt;
-  }
-
-  endAim(fireOnRelease: boolean) {
-    if (fireOnRelease && this.aim && !this.aim.fired) this.fire();
-    this.aim = null;
-  }
-
-  fire() {
-    if (!this.ready || !this.aim) return;
-    this.aim.fired = true;
-    this.lastShot = {
-      angle: this.pivot.rotation,
-      position: vec2.clone(this.owner.body.pos)
-    };
+    const aim = this.aimAt(target);
+    if (!aim) return;
+    const { mount, direction, hit } = aim;
+    this.pivot.setOrientation(Math.atan2(direction[1], direction[0]));
+    this.pivot.snapshotPose();
     this.deploying = true;
-    const mount = this.pivot.localToWorld([0, 0]);
-    const angle = this.pivot.rotation;
-    const direction = vec2.fromValues(Math.cos(angle), Math.sin(angle));
-    const head =
-      this.cast(mount, direction, gun.maxReach).kind === "robot" ? "glove" : "claw";
+    const head = hit.kind === "robot" ? "glove" : "claw";
     this.muzzle.localToWorld(nose[head], this.tip);
+    this.stance.worldToLocal(this.tip, this.tipNode.position);
+    this.tipNode.snapshotPose();
     this.shot = {
       kind: "extending",
       head,
@@ -178,8 +163,6 @@ export class PlayerGun {
   }
 
   onRespawn() {
-    this.endAim(false);
-    this.lastShot = null;
     this.deploying = false;
     this.muzzle.position[0] = 0;
     this.pivot.setOrientation(-Math.PI / 2);
@@ -190,18 +173,11 @@ export class PlayerGun {
   }
 
   update(dt: number) {
-    if (
-      this.lastShot &&
-      vec2.squaredDistance(this.owner.body.pos, this.lastShot.position) >=
-        gun.aimMemoryDistance ** 2
-    )
-      this.lastShot = null;
-    if (this.aim?.target) this.pointAt(this.aim.target);
     const shot = this.shot;
     // Even a point-blank hit completes the outward stroke before the barrel stows.
     const reach = approach(
       this.muzzle.position[0],
-      this.aiming || this.deploying || shot.kind !== "idle" ? gun.barrelLength : 0,
+      this.deploying || shot.kind !== "idle" ? gun.barrelLength : 0,
       gun.barrelSpeed * dt
     );
     this.muzzle.position[0] = reach;
@@ -297,34 +273,6 @@ export class PlayerGun {
     this.stance.worldToLocal(this.tip, this.tipNode.position);
   }
 
-  private drawSight(ctx: CanvasRenderingContext2D) {
-    const [dx, dy, , , x, y] = this.pivot.renderWorldMatrix;
-    const hit = this.aiming
-      ? this.cast(vec2.fromValues(x, y), vec2.fromValues(dx, dy), gun.maxReach)
-      : null;
-    const reach = this.muzzle.renderPosition[0];
-    if (this.ready && reach > 0) {
-      const head = hit?.kind === "robot" ? "glove" : "claw";
-      ctx.save();
-      ctx.translate(reach + nose[head][0], 0);
-      if (head === "glove") drawBoxingGlove(ctx);
-      else drawGrappleHead(ctx, false);
-      ctx.restore();
-    }
-    if (!hit || hit.kind === "clear") return;
-    ctx.translate(Math.hypot(hit.point[0] - x, hit.point[1] - y), 0);
-    ctx.fillStyle = "#ff403d";
-    ctx.shadowColor = ctx.fillStyle;
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.arc(0, 0, 3, 0, tau);
-    ctx.fill();
-    ctx.fillStyle = "#fff2dc";
-    ctx.beginPath();
-    ctx.arc(0, 0, 1.25, 0, tau);
-    ctx.fill();
-  }
-
   private drawBarrel(ctx: CanvasRenderingContext2D) {
     const reach = this.muzzle.renderPosition[0];
     if (reach <= 0) return;
@@ -338,6 +286,10 @@ export class PlayerGun {
     ctx.fillStyle = "#566973";
     ctx.fillRect(-4, -5.5, 4, 11);
     ctx.strokeRect(-4, -5.5, 4, 11);
+    if (this.ready) {
+      ctx.translate(nose.claw[0], 0);
+      drawGrappleHead(ctx, false);
+    }
   }
 
   private drawGrapple(ctx: CanvasRenderingContext2D) {

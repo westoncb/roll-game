@@ -1,5 +1,4 @@
 import { vec2 } from "gl-matrix";
-import { settings } from "../settings";
 import { gameAssets } from "../assets";
 import { nearbyEdges } from "../engine/collision";
 import { fill, stroke } from "../engine/draw-routines";
@@ -170,7 +169,6 @@ export class Player implements Entity {
   private wallRight = 0;
   private jumpHeldSeconds: number | null = null;
   private launchCharge: number | null = null;
-  private readonly lastJumpDirection = vec2.fromValues(0, -1);
   private landingVelocity?: vec2;
   private groundSpeed = 0;
   readonly visual = new Drawable2D((ctx, { time }) => this.drawSpawnShield(ctx, time));
@@ -236,7 +234,6 @@ export class Player implements Entity {
     vec2.zero(this.body.vel);
     vec2.zero(this.body.accel);
     vec2.zero(this.moveInput);
-    vec2.set(this.lastJumpDirection, 0, -1);
     vec2.zero(this.stance.position);
     vec2.zero(this.shell.position);
     this.shell.rotation = 0;
@@ -290,7 +287,7 @@ export class Player implements Entity {
     return lerp(1, jump.chargedSpeedScale, this.launchCharge ?? this.jumpCharge());
   }
 
-  control(input: InputState, dt: number, aimMode = settings.gunAim) {
+  control(input: InputState, dt: number) {
     const down = (arrow: string, key: string) =>
       Number(input.keysDown.has(arrow) || input.keysDown.has(key));
     vec2.set(
@@ -300,19 +297,9 @@ export class Player implements Entity {
     );
     const previousStride = this.strideScale;
     this.launchCharge = null;
-    const mouseAim = aimMode === "mouse";
     for (const change of input.changes) {
-      if (change.type === "click") {
-        if (mouseAim) this.gun.pointAt(change.mousePos);
-        this.gun.fire();
-      } else if (change.code === "KeyF") {
-        if (change.type === "press") {
-          this.gun.beginAim(
-            this.support ? this.pushOffDirection(this.support) : this.lastJumpDirection
-          );
-        }
-        if (mouseAim) this.gun.pointAt(change.mousePos);
-        if (change.type === "release") this.gun.endAim(true);
+      if (change.type === "fire") {
+        this.gun.fireAt(change.target);
       } else if (change.code === "Space" && this.support) {
         if (change.type === "press") this.jumpHeldSeconds = 0;
         else if (this.jumpHeldSeconds !== null) {
@@ -320,13 +307,6 @@ export class Player implements Entity {
           this.jumpHeldSeconds = null;
         }
       }
-    }
-    if (this.gun.aiming) {
-      if (input.keysDown.has("KeyF")) {
-        if (mouseAim) this.gun.pointAt(input.mousePos);
-        else this.gun.turn(this.moveInput[0], dt);
-        vec2.zero(this.moveInput);
-      } else this.gun.endAim(false); // Focus loss cancels the hold without firing.
     }
     if (!this.support || !input.keysDown.has("Space")) this.jumpHeldSeconds = null;
     else if (this.jumpHeldSeconds !== null) this.jumpHeldSeconds += dt;
@@ -485,7 +465,7 @@ export class Player implements Entity {
       )
         this.punchedBy = null;
       let rate: number = movement.coastDeceleration;
-      if (reversing || this.gun.aiming) rate = movement.brakeDeceleration;
+      if (reversing) rate = movement.brakeDeceleration;
       else if (drive) {
         const pushOffSpeed = drive * movement.pushOffSpeed * stride;
         if (Math.abs(this.groundSpeed) < Math.abs(pushOffSpeed))
@@ -531,7 +511,6 @@ export class Player implements Entity {
           ? vec2.scale(vec2.create(), offset, -1 / depth)
           : this.pushOffDirection(this.support);
       vec2.scaleAndAdd(body.vel, body.vel, direction, launchSpeed);
-      vec2.copy(this.lastJumpDirection, direction);
       this.support = null;
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;

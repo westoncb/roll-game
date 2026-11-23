@@ -8,10 +8,10 @@ export const gameKeys: ReadonlySet<string> = new Set([
   "ArrowDown",
   "KeyA",
   "KeyD",
+  "KeyF",
   "KeyW",
   "KeyS",
-  "Space",
-  "KeyF"
+  "Space"
 ]);
 
 export type GameState = { level: Level };

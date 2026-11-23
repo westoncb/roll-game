@@ -27,10 +27,9 @@ const decisionSeconds = 0.18;
 
 type Aim = { point: vec2; kind: "punch" | "gem" | "terrain"; remaining: number };
 
-// The pilot only issues held keys and pointer positions. The shared player controller
-// handles charge, aim, shot travel, surface grip and braking for both competitors.
+// The pilot uses the same movement and firing inputs as the human player.
 export class RivalController {
-  private previousKeys = new Set<string>();
+  private jumpHeld = false;
   private aim: Aim | null = null;
   private walk: vec2 | null = null;
   private jumpTime = 0;
@@ -46,7 +45,7 @@ export class RivalController {
   ) {}
 
   onRespawn() {
-    this.previousKeys.clear();
+    this.jumpHeld = false;
     this.aim = this.walk = null;
     this.jumpTime = this.nextDecision = 0;
     this.cooldown = 0.35;
@@ -61,33 +60,29 @@ export class RivalController {
     }
 
     const aim = this.aim;
-    if (aim?.kind === "punch") aim.point = this.intercept();
     if (aim) aim.remaining -= dt;
     this.jumpTime -= dt;
     const keys = new Set<string>();
-    if (aim && aim.remaining > 0) keys.add("KeyF");
     if (this.jumpTime > 0) keys.add("Space");
     if (this.walk && !aim) {
       const [dx, dy] = vec2.subtract(vec2.create(), this.walk, this.self.body.pos);
       if (Math.abs(dx) > 12) keys.add(dx > 0 ? "KeyD" : "KeyA");
       if (Math.abs(dy) > 12) keys.add(dy > 0 ? "KeyS" : "KeyW");
     }
-    const point = aim?.point ?? null;
-    const input: InputState = { keysDown: keys, mousePos: point, changes: [] };
-    for (const code of ["KeyF", "Space"]) {
-      if (keys.has(code) !== this.previousKeys.has(code))
-        input.changes.push({
-          code,
-          type: keys.has(code) ? "press" : "release",
-          mousePos: point
-        });
+    const input: InputState = { keysDown: keys, changes: [] };
+    if (keys.has("Space") !== this.jumpHeld) {
+      this.jumpHeld = keys.has("Space");
+      input.changes.push({ code: "Space", type: this.jumpHeld ? "press" : "release" });
     }
-    this.previousKeys = keys;
-    this.self.control(input, dt, "mouse");
     if (aim && aim.remaining <= 0) {
+      input.changes.push({
+        type: "fire",
+        target: aim.kind === "punch" ? this.intercept() : aim.point
+      });
       this.aim = null;
       this.cooldown = 0.45;
     }
+    this.self.control(input, dt);
   }
 
   private sight(target: vec2) {
@@ -104,7 +99,7 @@ export class RivalController {
   private intercept() {
     const { pos, vel } = this.opponent.body;
     const flight = extensionTimeAt(vec2.distance(this.self.body.pos, pos));
-    // Lead within the robot's silhouette so the sight still selects the glove.
+    // Lead within the robot's silhouette so the shot still selects the glove.
     const lead = Math.min(
       flight,
       (this.opponent.body.radius * 0.7) / Math.max(1, vec2.length(vel))

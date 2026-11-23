@@ -74,8 +74,6 @@ export const playerConfig = {
     shakeHzY: 14
   },
   gun: {
-    aimSpeed: 2.7,
-    aimMemoryDistance: 48,
     maxReach: 540,
     launchSpeed: 1500,
     retractSpeed: 1150,

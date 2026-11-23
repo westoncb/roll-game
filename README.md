@@ -19,15 +19,13 @@ Press P or Esc to pause or resume. Open the level editor from the pause menu.
 
 Move with WASD or the arrow keys. Hold Space to charge a jump and release to launch. Full charge takes 0.30 seconds.
 
-Hold F to draw the grapple and show its laser dot. By default, the gun immediately aims at the cursor and tracks it while F is held. Release F or left-click while aiming to fire. Both heads extend up to 540 world units from the gun mount. They launch quickly, slow as the cable pays out, and retract automatically on a miss.
+Left-click or press F to fire at the center pip, even while moving or jumping. When the gun is ready, the four marks grow around the pip and turn pale green over a reachable gem or bright red over an exposed opponent in range. The marks spread as the shot extends. When the claw latches onto terrain or a gem, they close in and turn amber. The robot’s TV shows a crosshair while the shot is out. Both heads extend up to 540 world units from the gun mount, slow as the cable pays out, and retract automatically on a miss.
 
-In the test arena, you have red feet and the computer rival has turquoise feet. Line up your opponent with fungus behind them. Firing while the laser is on the opponent launches a boxing glove. On contact it punches them along the shot direction and retracts. The claw still pulls you to terrain and reels in gems.
+In the test arena, you have red feet and the computer rival has turquoise feet. Line up your opponent with fungus behind them. If the opponent is the first target in the shot’s path, the gun launches a boxing glove. On contact it punches them along the shot direction and retracts. The claw pulls you to terrain and reels in gems.
 
 Both robots start with 100 HP. Living fungus drains 36 HP per second until you escape. A direct, close-range glove hit against a stationary robot deals about 30 damage. Knockback scales with closing speed along the contact normal, and damage scales with its square. Glancing hits and contacts near full extension are weaker. Moving into the glove can make a hit harder.
 
 Each gem scores one point. A knockout earns ten points if your glove lands the finishing hit or knocks your opponent into the fungus that finishes them. Falling into fungus on your own costs only the two-second respawn delay. Robots return near their start with full health. An amber shield and a BOOT readout on the TV mark 0.75 seconds of protection. If a robot has to respawn inside fungus, the countdown starts once it gets clear. When the final gem is reeled in, the higher score wins. Equal scores draw.
-
-To try keyboard aiming, set `gunAim` to `"keyboard"` in `client/src/settings.ts`. Left/Right or A/D turn the gun. Each draw starts at the last shot angle until you move 48 world units from where you fired. After that, the gun points away from the surface underfoot, or along your last jump direction in midair.
 
 ## Level files
 

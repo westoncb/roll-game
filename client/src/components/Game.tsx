@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import type { vec2 } from "gl-matrix";
 import { gameKeys, updateGame, type GameState } from "../game";
-import { listenForInput } from "../engine/input";
+import { clientToWorld, listenForInput } from "../engine/input";
 import { loadLevel } from "../level-loader";
 import type { Level } from "../level";
 import { approach } from "../utils/math";
+import type { HoverTarget, PlayerGun } from "../player/gun";
+import { AimReticle } from "./AimReticle";
 
 type Hud = {
   you: number;
   rival: number | null;
   health: number;
   rivalHealth: number;
+  shotPhase: PlayerGun["phase"];
+  hoverTarget: HoverTarget | null;
   hint: string | null;
   result: string | null;
 };
@@ -48,6 +53,7 @@ function canvasLabel(hud: Hud | null) {
 export function Game() {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pointerRef = useRef<vec2 | null>(null);
   const pauseMenuRef = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState("");
   const [hud, setHud] = useState<Hud | null>(null);
@@ -83,7 +89,7 @@ export function Game() {
     loadLevel("test", controller.signal)
       .then((level) => {
         if (!controller.signal.aborted) {
-          session = startGame(host, canvas, { level }, setHud);
+          session = startGame(host, canvas, { level }, pointerRef, setHud);
           if (menu.open) session.pause();
         }
       })
@@ -104,7 +110,19 @@ export function Game() {
           Could not start the game. {error}
         </p>
       )}
-      <canvas id="game-canvas" ref={canvasRef} tabIndex={0} aria-label={canvasLabel(hud)} />
+      <canvas
+        id="game-canvas"
+        className={hud && hud.health > 0 && !hud.result ? "in-play" : undefined}
+        ref={canvasRef}
+        tabIndex={0}
+        aria-label={canvasLabel(hud)}
+      />
+      <AimReticle
+        canvasRef={canvasRef}
+        pointerRef={pointerRef}
+        phase={hud?.shotPhase ?? "idle"}
+        target={hud?.hoverTarget ?? null}
+      />
       <div className="damage-border fungal-border" aria-hidden="true" />
       <div className="damage-border punch-border" aria-hidden="true" />
       {hud?.hint && !hud.result && (
@@ -145,6 +163,7 @@ function startGame(
   host: HTMLElement,
   canvas: HTMLCanvasElement,
   game: GameState,
+  pointerRef: RefObject<vec2 | null>,
   onHud: (hud: Hud) => void
 ) {
   const ctx = canvas.getContext("2d");
@@ -173,7 +192,12 @@ function startGame(
   viewport?.addEventListener("resize", fitHost);
   viewport?.addEventListener("scroll", fitHost);
 
-  const { input, stopInput } = listenForInput(canvas, camera, gameKeys);
+  const { input, stopInput } = listenForInput(
+    canvas,
+    camera,
+    gameKeys,
+    () => pointerRef.current
+  );
   let previousHud: Hud | undefined;
   const syncHud = () => {
     const you = level.player.score,
@@ -182,17 +206,25 @@ function startGame(
       rivalHealth = Math.ceil(level.rival?.health ?? 0);
     const hint = playHint(level);
     const result = roundSummary(level);
+    const shotPhase = level.player.gun.phase;
+    const pointer = pointerRef.current;
+    const hoverTarget =
+      pointer && health > 0 && !result && shotPhase === "idle" && camera.zoom > 0
+        ? level.player.gun.hoverTarget(clientToWorld(canvas, camera, pointer))
+        : null;
     if (
       previousHud &&
       previousHud.you === you &&
       previousHud.rival === rival &&
       previousHud.health === health &&
       previousHud.rivalHealth === rivalHealth &&
+      previousHud.shotPhase === shotPhase &&
+      previousHud.hoverTarget === hoverTarget &&
       previousHud.hint === hint &&
       previousHud.result === result
     )
       return;
-    previousHud = { you, rival, health, rivalHealth, hint, result };
+    previousHud = { you, rival, health, rivalHealth, shotPhase, hoverTarget, hint, result };
     onHud(previousHud);
   };
   syncHud();
@@ -208,7 +240,6 @@ function startGame(
     previousTime = now;
     while (accumulator >= stepSeconds) {
       updateGame(game, input, stepSeconds);
-      syncHud();
       input.changes.length = 0;
       accumulator -= stepSeconds;
     }
@@ -242,6 +273,7 @@ function startGame(
         host.style.setProperty("--fungal-border-strength", String(fungalBorderStrength));
       }
     }
+    syncHud();
     frameId = requestAnimationFrame(frame);
   };
 
