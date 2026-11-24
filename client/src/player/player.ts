@@ -1,5 +1,12 @@
 import { vec2 } from "gl-matrix";
-import { gameAssets } from "../assets";
+import {
+  coordinates,
+  type EmitGameEvent,
+  type GameEvents,
+  type HealthSource,
+  type PlayerId,
+  type ScoreReason
+} from "../game-events";
 import { nearbyEdges } from "../engine/collision";
 import { fill, stroke } from "../engine/draw-routines";
 import { Drawable2D } from "../engine/drawable";
@@ -21,7 +28,6 @@ import type { InputState } from "../engine/input";
 import { PlayerScreen } from "./screen";
 import type { PunchImpact } from "./grapple-motion";
 import { PlayerGun, type CastBeam } from "./gun";
-import type { EffectPlayer } from "../engine/particles/system";
 import { collectContacts, gravityY, stepPhysics, PhysicsBody } from "../engine/physics";
 import {
   halfSole,
@@ -70,17 +76,6 @@ const shellShape: StyledShape = {
 };
 // A critically damped step from rest has 5% error at rate × time ≈ 4.744.
 const spacingSpringRate = 4.744 / legConfig.spacingSettleSeconds;
-
-export type HealthSource =
-  | { kind: "punch"; direction: vec2; strength: number }
-  | { kind: "gem" | "fungus" };
-
-export interface PlayerEvents {
-  scored(player: Player, points: number): void;
-  healthChanged(player: Player, delta: number, source: HealthSource): void;
-  punched(victim: Player, at: vec2, direction: vec2, strength: number): void;
-  defeated(player: Player): void;
-}
 
 type FreeFoot = { kind: "free"; offset: number; angularVelocity: number };
 type FootState =
@@ -161,7 +156,7 @@ function restingLeg(i: number): Leg {
   };
 }
 
-export class Player implements Entity {
+export class Player implements Entity<GameEvents> {
   readonly legs = Array.from({ length: legConfig.count }, (_, i) => restingLeg(i));
   support: Support | null = null;
   private readonly moveInput = vec2.create();
@@ -191,16 +186,15 @@ export class Player implements Entity {
     return this.gems + knockoutPoints * this.knockouts;
   }
   private readonly shell: Drawable2D;
-  private readonly screen: PlayerScreen;
+  readonly screen: PlayerScreen;
   private displayedCharge?: number;
 
   constructor(
+    readonly id: PlayerId,
     start: vec2,
     ground: GroundPolygon[],
-    private readonly particles: EffectPlayer,
     castBeam: CastBeam,
-    private readonly events: PlayerEvents,
-    private readonly resolveDefeat: (victim: Player) => void,
+    private readonly resolveDefeat: (victim: Player, emit: EmitGameEvent) => void,
     private readonly colors: PlayerColors = playerConfig.colors
   ) {
     this.gun = new PlayerGun(this.stance, this, castBeam);
@@ -341,34 +335,42 @@ export class Player implements Entity {
     };
   }
 
-  award(kind: "gem" | "knockout") {
-    if (kind === "gem") {
+  award(reason: ScoreReason, emit: EmitGameEvent) {
+    const before = this.score;
+    if (reason === "gem") {
       this.gems++;
-      this.changeHealth(gemHealing, { kind: "gem" });
+      this.changeHealth(gemHealing, { kind: "gem" }, emit);
     } else this.knockouts++;
-    this.events.scored(this, kind === "gem" ? 1 : knockoutPoints);
+    emit("scored", { player: this.id, reason, before, after: this.score });
   }
 
-  private changeHealth(delta: number, source: HealthSource) {
+  private changeHealth(delta: number, source: HealthSource, emit: EmitGameEvent) {
     if (!this.health) return;
     const before = this.health;
     this.health = Math.max(0, Math.min(maxHealth, before + delta));
     if (this.health < 1e-6) this.health = 0;
     if (this.health === before) return;
-    this.events.healthChanged(this, this.health - before, source);
+    const position = coordinates(this.body.pos);
+    emit("healthChanged", {
+      player: this.id,
+      before,
+      after: this.health,
+      source,
+      position
+    });
     if (!this.health) {
-      this.events.defeated(this);
-      this.resolveDefeat(this);
+      emit("defeated", { player: this.id, position, velocity: coordinates(this.body.vel) });
+      this.resolveDefeat(this, emit);
     }
   }
 
-  exposeToFungus(seconds: number, touchingAtEnd: boolean) {
+  exposeToFungus(seconds: number, touchingAtEnd: boolean, emit: EmitGameEvent) {
     if (seconds > 0)
-      this.changeHealth(-fungusDamagePerSecond * seconds, { kind: "fungus" });
+      this.changeHealth(-fungusDamagePerSecond * seconds, { kind: "fungus" }, emit);
     this.inFungus = touchingAtEnd && this.health > 0;
   }
 
-  takePunch(at: vec2, { normal, impulse, damage }: PunchImpact) {
+  takePunch(at: vec2, { normal, impulse, damage }: PunchImpact, emit: EmitGameEvent) {
     if (!this.health || this.spawnProtection || impulse <= 0) return;
     if (this.gun.anchor) this.gun.finish();
     this.support = null;
@@ -376,9 +378,9 @@ export class Player implements Entity {
     this.groundSpeed = 0;
     vec2.scaleAndAdd(this.body.vel, this.body.vel, normal, impulse);
     const strength = impulse / playerConfig.gun.punchImpulse;
-    this.screen.showImpact();
-    this.events.punched(this, at, normal, strength);
-    this.changeHealth(-damage, { kind: "punch", direction: normal, strength });
+    const direction = coordinates(normal);
+    emit("punched", { player: this.id, position: coordinates(at), direction, strength });
+    this.changeHealth(-damage, { kind: "punch", direction, strength }, emit);
   }
 
   private get bootProgress() {
@@ -546,9 +548,9 @@ export class Player implements Entity {
     }
   }
 
-  afterPhysics(dt: number, ground: GroundPolygon[]) {
-    this.updateFeet(dt, ground);
-    this.gun.update(dt);
+  afterPhysics(dt: number, ground: GroundPolygon[], emit: EmitGameEvent) {
+    this.updateFeet(dt, ground, emit);
+    this.gun.update(dt, emit);
     this.poseAnkles();
     this.updateScreen(dt);
   }
@@ -675,7 +677,7 @@ export class Player implements Entity {
     return stance;
   }
 
-  private updateFeet(dt: number, ground: GroundPolygon[]) {
+  private updateFeet(dt: number, ground: GroundPolygon[], emit: EmitGameEvent) {
     const speed = Math.abs(this.groundSpeed);
     const rollRate = speed / this.body.radius;
     // Faster steps leave less time to open the foot before its anchor passes.
@@ -747,30 +749,21 @@ export class Player implements Entity {
       ) {
         const { anchor, landingVelocity } = leg.foot;
         leg.foot = { kind: "planted", anchor, plantedOffset: anchor.offset };
-        if (landingVelocity || speed > 0) this.playFootDust(anchor, speed, landingVelocity);
+        const { edge, offset } = anchor;
+        emit("footPlanted", {
+          player: this.id,
+          foot: i,
+          position: coordinates(soleAt(edge, offset)),
+          normal: coordinates(edge.normal),
+          speed,
+          landingSpeed: landingVelocity
+            ? Math.max(0, -vec2.dot(landingVelocity, edge.normal))
+            : null
+        });
       } else {
         clearSwing(swingCenter, leg, edges);
       }
     }
-  }
-
-  private playFootDust(
-    { edge, offset }: FootAnchor,
-    speed: number,
-    landingVelocity?: vec2
-  ) {
-    const strength = landingVelocity
-      ? Math.min(1, Math.max(0, -vec2.dot(landingVelocity, edge.normal)) / jump.fullSpeed)
-      : movement.maxStepDustStrength * Math.min(1, speed / movement.topSpeed);
-    this.particles.play(
-      gameAssets.particles.get("landing-dust"),
-      {
-        kind: "world",
-        position: soleAt(edge, offset),
-        angle: Math.atan2(edge.normal[1], edge.normal[0])
-      },
-      { strength }
-    );
   }
 
   private drawLegs(ctx: CanvasRenderingContext2D) {

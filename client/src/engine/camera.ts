@@ -25,7 +25,6 @@ type ShakePulse = Required<Omit<CameraShake, "direction">> & {
   axisY: number;
   phase: number;
   end: number;
-  managed: boolean;
 };
 
 const maxShakePixels = 14;
@@ -62,17 +61,12 @@ export class Camera {
     return this.playfield.height * this.zoom;
   }
 
-  /** Start a pulse on the same simulation clock used by sampleShake. */
-  shake(shake: CameraShake, time: number) {
-    this.addPulse(shake, time, false);
-  }
-
   /** Compose a shake with other effects. The camera mixes it with all other pulses. */
   shakeEffect(shake: CameraShake): Effect {
     return {
       kind: "leaf",
       start: (time) => {
-        const pulse = this.addPulse(shake, time, true);
+        const pulse = this.addPulse(shake, time);
         return {
           advance: (step) => {
             if (!pulse) return time;
@@ -96,8 +90,7 @@ export class Camera {
       crossAxis = 0.25,
       envelope = quadraticDecay
     }: CameraShake,
-    time: number,
-    managed: boolean
+    time: number
   ) {
     if (!(amplitude > 0 && duration > 0 && frequency > 0)) return;
     const directed = direction && (direction[0] !== 0 || direction[1] !== 0);
@@ -112,8 +105,7 @@ export class Camera {
       axisX: Math.cos(angle),
       axisY: Math.sin(angle),
       phase: directed ? Math.PI / 2 : 0,
-      end: time + duration,
-      managed
+      end: time + duration
     };
     this.pulses.add(pulse);
     return pulse;
@@ -134,11 +126,7 @@ export class Camera {
     }
     for (const pulse of this.pulses) {
       const age = time - pulse.start;
-      if (time >= pulse.end) {
-        if (!pulse.managed) this.pulses.delete(pulse);
-        continue;
-      }
-      if (age < 0 || reducedMotion) continue;
+      if (age < 0 || time >= pulse.end || reducedMotion) continue;
       const amplitude = pulse.amplitude * pulse.envelope(age / pulse.duration);
       const cycle = tau * pulse.frequency * age;
       const along = Math.sin(cycle + pulse.phase);

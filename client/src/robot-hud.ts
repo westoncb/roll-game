@@ -1,6 +1,7 @@
 import { HealthPopup } from "./health-popup";
 import { maxHealth } from "./player/config";
-import type { HealthSource, Player } from "./player/player";
+import type { Player } from "./player/player";
+import type { GameEvents } from "./game-events";
 import { lerp } from "./utils/math";
 
 const scoreGrowSeconds = 0.12;
@@ -34,10 +35,10 @@ export class RobotHud {
     private readonly addPopup: (popup: HealthPopup) => void
   ) {}
 
-  scored(points: number, time: number) {
+  scored(before: number, time: number) {
     if (!this.human) return;
     // If another award arrives mid-roll, pick up at the visible number and size.
-    this.scoreFrom = this.rollingScore(time, this.player.score - points);
+    this.scoreFrom = this.rollingScore(time, before);
     this.scoreScaleFrom = this.scoreScale(time);
     this.scoredAt = time;
   }
@@ -65,14 +66,20 @@ export class RobotHud {
     );
   }
 
-  healthChanged(delta: number, source: HealthSource, time: number) {
+  healthChanged(
+    { before, after, source, position }: GameEvents["healthChanged"],
+    time: number
+  ) {
+    const delta = after - before;
     this.growthAtChange = this.meterGrowth(time);
     this.lastChange = time;
     if (source.kind === "fungus") {
       if (this.fungalDelta === 0) this.fungusSince = time;
       this.fungalDelta += delta;
     } else {
-      this.addPopup(new HealthPopup(this.player, delta, source, time, this.bounds));
+      this.addPopup(
+        new HealthPopup(position, this.player.body.radius, delta, source, time, this.bounds)
+      );
     }
   }
 
@@ -86,7 +93,14 @@ export class RobotHud {
     )
       return;
     this.addPopup(
-      new HealthPopup(this.player, this.fungalDelta, { kind: "fungus" }, time, this.bounds)
+      new HealthPopup(
+        this.player.body.pos,
+        this.player.body.radius,
+        this.fungalDelta,
+        { kind: "fungus" },
+        time,
+        this.bounds
+      )
     );
     this.fungalDelta = 0;
   }

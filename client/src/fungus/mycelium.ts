@@ -7,6 +7,7 @@
  */
 import { vec2 } from "gl-matrix";
 import type { ColonyTuning } from "./config";
+import type { EmitGameEvent } from "../game-events";
 import { MinQueue } from "../utils/min-queue";
 import { Fibers, type FungalFabric } from "./fabric";
 import type { GrowthDomain } from "./domain";
@@ -81,8 +82,8 @@ export class Mycelium<Gem extends GemSite = GemSite> {
     this.routesChanged = true;
   }
 
-  extract(gem: Gem, time: number) {
-    this.update(time);
+  extract(gem: Gem, time: number, emit: EmitGameEvent) {
+    this.update(time, emit);
     this.gems.delete(gem.id);
     gem.vertex.gem = undefined;
     gem.vertex.distance = Infinity;
@@ -194,7 +195,7 @@ export class Mycelium<Gem extends GemSite = GemSite> {
     return site.health * Math.max(0, (power - maintenanceSupply) / (1 - maintenanceSupply));
   }
 
-  update(time: number) {
+  update(time: number, emit: EmitGameEvent) {
     const dt = time - this.time;
     if (dt <= 0) return;
     const { nutrientLength, maintenanceSupply, starvationSeconds, lowSupplyDecayBoost } =
@@ -220,6 +221,6 @@ export class Mycelium<Gem extends GemSite = GemSite> {
       }
     }
     this.refreshRoutes();
-    this.fabric.crumble(time);
+    this.fabric.crumble(time, emit);
   }
 }

@@ -23,8 +23,6 @@ export interface EffectOptions {
   strength?: number;
 }
 
-export type EffectPlayer = Pick<ParticleSystem, "play">;
-
 /** One play of an asset shares a pose and random sequence across its emitters. */
 class ParticlePlayback {
   readonly emitters: EmitterState[];
@@ -64,8 +62,8 @@ export class ParticleSystem {
 
   /** Share a scheduler for composed and direct plays. A standalone pool owns its scheduler. */
   constructor(
-    private readonly maxParticles = 4096,
-    private readonly scheduler = new EffectScheduler()
+    private readonly scheduler = new EffectScheduler(),
+    private readonly maxParticles = 4096
   ) {
     if (!Number.isSafeInteger(maxParticles) || maxParticles < 0)
       throw new RangeError("Particle budget must be a nonnegative integer.");

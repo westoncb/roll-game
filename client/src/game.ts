@@ -17,5 +17,7 @@ export const gameKeys: ReadonlySet<string> = new Set([
 export type GameState = { level: Level };
 
 export function updateGame(game: GameState, input: InputState, dt: number) {
-  game.level.update(input, dt);
+  const tick = game.level.update(input, dt);
+  game.level.presentation.update(tick);
+  return tick;
 }

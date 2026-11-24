@@ -8,6 +8,7 @@ import { vec2 } from "gl-matrix";
 import { castCapsule, nearestBoundary, sweepCircle } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import type { Entity } from "../engine/entity";
+import type { EmitGameEvent, GameEvents } from "../game-events";
 import { GroundPolygon } from "../engine/ground";
 import { tau } from "../utils/math";
 import type { Player } from "../player/player";
@@ -66,7 +67,7 @@ type ReturnTrip =
       elapsed: number;
     };
 
-export class FungalGem implements Entity {
+export class FungalGem implements Entity<GameEvents> {
   readonly radius: number;
   readonly visual: Drawable2D;
   private age: number;
@@ -144,8 +145,8 @@ export class FungalGem implements Entity {
     );
   }
 
-  reelTo(receiver: Player, speed: number) {
-    this.colony.detachGem(this);
+  reelTo(receiver: Player, speed: number, emit: EmitGameEvent) {
+    this.colony.detachGem(this, emit);
     this.trip = {
       phase: "reeling",
       receiver,
@@ -155,7 +156,7 @@ export class FungalGem implements Entity {
   }
 
   /** Called after body movement, including while the player holds a fatal-contact pose. */
-  advanceReturn(dt: number) {
+  advanceReturn(dt: number, emit: EmitGameEvent) {
     const trip = this.trip!;
     const pos = this.visual.position;
     if (trip.phase === "collecting") {
@@ -178,7 +179,7 @@ export class FungalGem implements Entity {
     const hit = this.cast(trip.previousCenter, relativeEnd, trip.receiver.body.radius);
     vec2.scaleAndAdd(pos, pos, travel, hit?.fraction ?? 1);
     if (hit) {
-      trip.receiver.award("gem");
+      trip.receiver.award("gem", emit);
       if (this.colony.tuning.gemCollectSeconds === 0) {
         this.trip = null;
         return true;

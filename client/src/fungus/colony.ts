@@ -8,6 +8,8 @@ import { vec2 } from "gl-matrix";
 import { castCapsule } from "../engine/collision";
 import { Drawable2D } from "../engine/drawable";
 import type { Entity } from "../engine/entity";
+import type { GroundPolygon } from "../engine/ground";
+import type { EmitGameEvent, GameEvents } from "../game-events";
 import { closestPointOnSegment, seededRandom, tau } from "../utils/math";
 import {
   defaultColonySeed,
@@ -34,7 +36,7 @@ type Tip = Trail & {
 type Proposal = { moving: boolean; tip: Tip; p: vec2; angle: number; bend: number };
 type Fusion = { a: Proposal; target: Proposal | Vertex; gap: number };
 
-export class FungalColony implements Entity {
+export class FungalColony implements Entity<GameEvents> {
   readonly id: string;
   get gems() {
     return this.mycelium.gems;
@@ -76,14 +78,13 @@ export class FungalColony implements Entity {
 
   constructor(
     data: ColonyData,
-    private readonly domain: GrowthDomain,
-    releaseAsh?: (position: vec2, amount: number) => void
+    private readonly domain: GrowthDomain
   ) {
     this.id = data.id;
     this.tuning = resolveColonyTuning(data.tuning, data.id);
     this.authoredIds = new Set(data.nodes.map((gem) => gem.id));
     this.palette = colonyPalette(data.primaryColor);
-    this.fabric = new FungalFabric(this.palette, this.tuning, domain, releaseAsh);
+    this.fabric = new FungalFabric(this.palette, this.tuning, domain);
     const seed = data.seed ?? defaultColonySeed;
     this.random = seededRandom(seed);
     this.mycelium = new Mycelium<FungalGem>(this.tuning, this.fabric, domain, seed);
@@ -138,9 +139,9 @@ export class FungalColony implements Entity {
     this.attachGem(id, site, true);
   }
 
-  detachGem(gem: FungalGem) {
+  detachGem(gem: FungalGem, emit: EmitGameEvent) {
     if (gem.vertex.gem !== gem) return;
-    this.mycelium.extract(gem, this.time);
+    this.mycelium.extract(gem, this.time, emit);
     this.fusionSites.delete(gem.vertex);
     this.pruneGrowth();
     this.detached.add(gem);
@@ -445,7 +446,7 @@ export class FungalColony implements Entity {
     this.tips = this.tips.filter((tip) => tip.vertex.alive);
   }
 
-  update(dt: number) {
+  update(dt: number, emit: EmitGameEvent) {
     const end = this.time + dt;
     const { tickSeconds, nutrientStepSeconds } = this.tuning;
     // Both clocks run in simulation time. Tissue keeps aging after the last extraction.
@@ -458,16 +459,16 @@ export class FungalColony implements Entity {
       this.mycelium.advanceWounds(until);
       if (until === tissueAt) {
         this.tissueTick++;
-        this.mycelium.update(until);
+        this.mycelium.update(until, emit);
         this.pruneGrowth();
       }
       if (until === growthAt) this.grow();
     }
   }
 
-  afterPhysics(dt: number) {
+  afterPhysics(dt: number, _ground: GroundPolygon[], emit: EmitGameEvent) {
     for (const gem of this.detached) {
-      if (gem.advanceReturn(dt)) {
+      if (gem.advanceReturn(dt, emit)) {
         gem.visual.dispose();
         this.detached.delete(gem);
       }

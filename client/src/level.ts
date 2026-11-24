@@ -8,19 +8,17 @@ import { FlowBackground } from "./flow-background";
 import { GroundPolygon } from "./engine/ground";
 import type { InputState } from "./engine/input";
 import { lerp, tau } from "./utils/math";
-import { ParticleSystem } from "./engine/particles/system";
+import { recordTickEvents } from "./engine/events";
+import type { EmitGameEvent, GameEvents, PlayerId } from "./game-events";
 import { stepPhysics } from "./engine/physics";
-import { Player, type PlayerEvents } from "./player/player";
+import { Player } from "./player/player";
 import type { BeamHit, CastBeam } from "./player/gun";
-import { maxPunchStrength } from "./player/grapple-motion";
 import { respawnGraceSeconds, rivalColors } from "./player/config";
 import { RivalController } from "./player/rival";
 import { FungalColony } from "./fungus/colony";
 import type { ColonyData } from "./fungus/config";
 import { GrowthDomain } from "./fungus/domain";
-import { HealthPopup } from "./health-popup";
-import { RobotHud } from "./robot-hud";
-import { PunchBurst } from "./punch-burst";
+import { LevelPresentation } from "./level-presentation";
 
 export type Point = [number, number];
 export type GroundData = { vertices: Point[]; style?: string };
@@ -35,47 +33,13 @@ export type LevelData = {
 
 export type RoundResult = "player-contact" | "cleared";
 const respawnDelaySeconds = 2;
-const impactBorderFadeSeconds = 0.48;
 
-function inPlay(entity: Entity) {
+function inPlay(entity: Entity<GameEvents>) {
   return !(entity instanceof Player && entity.respawnRemaining > 0);
 }
 
-function shakeOnPunch(
-  camera: Camera,
-  time: number,
-  direction: vec2,
-  strength: number,
-  hitYou: boolean
-) {
-  const gain = strength ** 0.75 * (hitYou ? 1 : 0.36);
-  camera.shake(
-    {
-      amplitude: 12 * gain,
-      duration: lerp(0.12, 0.18, strength),
-      frequency: 4.2,
-      direction,
-      crossAxis: 0
-    },
-    time
-  );
-  camera.shake(
-    {
-      amplitude: 8.5 * gain,
-      duration: (hitYou ? 0.48 : 0.26) * lerp(0.7, 1, strength),
-      frequency: 10.5,
-      crossAxis: 0.8,
-      // Hold the vibration through the shove, then smoothly taper its tail.
-      envelope: (t) => (1 - t * t) ** 2
-    },
-    time
-  );
-}
-
 export class Level {
-  readonly particles = new ParticleSystem();
-  private readonly effects = new Set<HealthPopup | PunchBurst>();
-  private readonly readouts = new Map<Player, RobotHud>();
+  readonly presentation: LevelPresentation;
   readonly size: Readonly<{ width: number; height: number }>;
   readonly camera: Camera;
   readonly player: Player;
@@ -87,12 +51,9 @@ export class Level {
   private readonly flowBackground = new FlowBackground();
   private previousTime = 0;
   private time = 0;
-  private previousImpactBorder = 0;
-  private impactBorder = 0;
-  private impactBorderHoldUntil = 0;
   private previousFungalExposure = 0;
   private fungalExposure = 0;
-  readonly entities: Entity[];
+  readonly entities: Entity<GameEvents>[];
   readonly fungalColonies: FungalColony[];
   private readonly domain: GrowthDomain;
   private readonly playerFrom = vec2.create();
@@ -116,14 +77,7 @@ export class Level {
     });
     this.domain = new GrowthDomain(data.width, data.height, this.ground);
     this.fungalColonies = (data.fungalColonies ?? []).map(
-      (config) =>
-        new FungalColony(config, this.domain, (position, strength) => {
-          this.particles.play(
-            gameAssets.particles.get("fungal-ash"),
-            { kind: "world", position },
-            { strength }
-          );
-        })
+      (config) => new FungalColony(config, this.domain)
     );
     const castFor =
       (opponent: () => Player | undefined): CastBeam =>
@@ -153,71 +107,21 @@ export class Level {
         }
         return first ?? { kind: "clear", point: to };
       };
-    const events: PlayerEvents = {
-      scored: (player, points) => this.readouts.get(player)!.scored(points, this.time),
-      healthChanged: (player, delta, source) =>
-        this.readouts.get(player)!.healthChanged(delta, source, this.time),
-      punched: (victim, at, direction, impactStrength) => {
-        const strength = Math.min(1, impactStrength);
-        const relativeImpulse = Math.min(1, impactStrength / maxPunchStrength);
-        const hitYou = victim === this.player;
-        if (hitYou && relativeImpulse >= this.impactBorder) {
-          this.impactBorder = relativeImpulse;
-          this.impactBorderHoldUntil = this.time + lerp(0.04, 0.1, relativeImpulse);
-        }
-        shakeOnPunch(this.camera, this.time, direction, strength, hitYou);
-        const burst = new PunchBurst(
-          at,
-          direction,
-          relativeImpulse,
-          this.time,
-          victim.visual,
-          victim.body.radius
-        );
-        this.effects.add(burst);
-        this.particles.play(
-          gameAssets.particles.get("punch-dust"),
-          { kind: "world", position: at, angle: Math.atan2(-direction[1], -direction[0]) },
-          { strength }
-        );
-      },
-      defeated: (victim) => {
-        for (const effect of this.effects) {
-          if (effect instanceof PunchBurst && effect.target === victim.visual)
-            effect.fadeOnKnockout(this.time);
-        }
-        this.camera.shake(
-          {
-            amplitude: victim === this.player ? 6 : 1.4,
-            duration: 0.26,
-            frequency: 8
-          },
-          this.time
-        );
-        this.particles.play(gameAssets.particles.get("impact-sparks"), {
-          kind: "world",
-          position: victim.body.pos,
-          angle: Math.atan2(victim.body.vel[1], victim.body.vel[0])
-        });
-      }
-    };
     this.player = new Player(
+      "player",
       vec2.fromValues(...data.playerStart),
       this.ground,
-      this.particles,
       castFor(() => this.rival),
-      events,
       this.resolveDefeat
     );
     this.entities = [...this.fungalColonies, this.player];
     if (data.rivalStart) {
       const cast = castFor(() => this.player);
       this.rival = new Player(
+        "rival",
         vec2.fromValues(...data.rivalStart),
         this.ground,
-        this.particles,
         cast,
-        events,
         this.resolveDefeat,
         rivalColors
       );
@@ -230,28 +134,26 @@ export class Level {
       );
       this.entities.push(this.rival);
     }
-    for (const player of [this.player, this.rival]) {
-      if (player)
-        this.readouts.set(
-          player,
-          new RobotHud(player, player === this.player, this.size, (popup) =>
-            this.effects.add(popup)
-          )
-        );
-    }
+    this.presentation = new LevelPresentation(this);
   }
 
-  private readonly resolveDefeat = (victim: Player) => {
+  getPlayer(id: PlayerId) {
+    if (id === this.player.id) return this.player;
+    if (this.rival?.id === id) return this.rival;
+    throw new Error(`Player "${id}" is absent from this level.`);
+  }
+
+  private readonly resolveDefeat = (victim: Player, emit: EmitGameEvent) => {
     if (!this.rival) {
       this.result = "player-contact";
       return;
     }
     victim.respawnRemaining = respawnDelaySeconds;
     const opponent = victim === this.player ? this.rival : this.player;
-    opponent.award("knockout");
+    opponent.award("knockout", emit);
   };
 
-  private resolveContact(actor: Player, from: vec2, dt: number) {
+  private resolveContact(actor: Player, from: vec2, dt: number, emit: EmitGameEvent) {
     if (!actor.health) return 0;
     const { pos, radius } = actor.body;
     if (actor.spawnProtection) {
@@ -278,7 +180,7 @@ export class Level {
       covered += Math.max(0, interval.end - Math.max(interval.start, end));
       end = Math.max(end, interval.end);
     }
-    actor.exposeToFungus(covered * dt, end === 1);
+    actor.exposeToFungus(covered * dt, end === 1, emit);
     return covered;
   }
 
@@ -323,25 +225,18 @@ export class Level {
   }
 
   update(input: InputState, dt: number) {
-    this.previousTime = this.time;
-    this.time += dt;
+    const tick = recordTickEvents<GameEvents>(this.time, this.time + dt, (emit) =>
+      this.simulate(input, dt, emit)
+    );
+    this.previousTime = tick.start;
+    this.time = tick.end;
+    return tick;
+  }
+
+  private simulate(input: InputState, dt: number, emit: EmitGameEvent) {
     this.previousFungalExposure = this.fungalExposure;
     this.fungalExposure = 0;
-    this.previousImpactBorder = this.impactBorder;
-    if (this.time > this.impactBorderHoldUntil) {
-      const fadeTime = Math.min(dt, this.time - this.impactBorderHoldUntil);
-      this.impactBorder = Math.max(
-        0,
-        this.impactBorder - fadeTime / impactBorderFadeSeconds
-      );
-    }
-    for (const effect of this.effects) {
-      if (effect.expiresAt <= this.previousTime) this.effects.delete(effect);
-    }
-    if (this.result && this.rival) {
-      this.particles.step(dt);
-      return;
-    }
+    if (this.result && this.rival) return;
     if (this.rival) {
       this.advanceRespawn(this.player, this.rival, dt);
       this.advanceRespawn(this.rival, this.player, dt);
@@ -349,26 +244,26 @@ export class Level {
     vec2.copy(this.playerFrom, this.player.body.pos);
     if (this.rival) vec2.copy(this.rivalFrom, this.rival.body.pos);
     // A solo level keeps growing around the player's final contact pose.
-    const active: Entity[] = this.result
+    const active: Entity<GameEvents>[] = this.result
       ? this.fungalColonies
       : this.entities.filter(inPlay);
     for (const entity of this.entities) entity.visual.snapshotPose();
     for (const entity of active) {
-      entity.update?.(dt);
+      entity.update?.(dt, emit);
       if (entity === this.rival) this.rivalController?.control(dt);
-      else entity.control?.(input, dt);
+      else entity.control?.(input, dt, emit);
     }
     for (const entity of active) {
-      if (entity.move) entity.move(this.ground, dt);
+      if (entity.move) entity.move(this.ground, dt, emit);
       else if (entity.body) stepPhysics(entity.body, this.ground, dt);
     }
     if (!this.result) {
-      this.fungalExposure = this.resolveContact(this.player, this.playerFrom, dt);
-      if (this.rival) this.resolveContact(this.rival, this.rivalFrom, dt);
+      this.fungalExposure = this.resolveContact(this.player, this.playerFrom, dt, emit);
+      if (this.rival) this.resolveContact(this.rival, this.rivalFrom, dt, emit);
     }
     for (const entity of active) {
       if (!(entity instanceof Player && !entity.health))
-        entity.afterPhysics?.(dt, this.ground);
+        entity.afterPhysics?.(dt, this.ground, emit);
     }
     if (
       !this.result &&
@@ -377,13 +272,6 @@ export class Level {
       this.fungalColonies.every((c) => !c.hasUncollectedGems)
     )
       this.result = "cleared";
-    for (const hud of this.readouts.values())
-      hud.flushFungalDamage(this.time, !!this.result);
-    this.particles.step(dt);
-  }
-
-  impactBorderOpacity(alpha: number) {
-    return 0.76 * lerp(this.previousImpactBorder, this.impactBorder, alpha) ** 1.45;
   }
 
   fungalExposureAt(alpha: number) {
@@ -405,17 +293,12 @@ export class Level {
     for (const entity of this.entities) entity.visual.samplePose(alpha);
     this.flowBackground.draw(ctx, this.size, reducedMotion ? 0 : time);
     this.groundVisual.render(ctx, alpha, time);
-    this.particles.draw(ctx, "behind", alpha);
+    this.presentation.particles.draw(ctx, "behind", alpha);
     for (const entity of this.entities) {
       if (inPlay(entity)) entity.visual.paintSampled(ctx, time);
     }
-    this.particles.draw(ctx, "front", alpha);
-    for (const effect of this.effects) effect.visual.render(ctx, alpha, time);
-    const largestDuelScore = this.rival
-      ? Math.max(this.player.score, this.rival.score)
-      : undefined;
-    for (const hud of this.readouts.values())
-      hud.draw(ctx, time, this.camera.zoom, reducedMotion, largestDuelScore);
+    this.presentation.particles.draw(ctx, "front", alpha);
+    this.presentation.drawOverlays(ctx, alpha, time, reducedMotion);
     ctx.restore();
   }
 }

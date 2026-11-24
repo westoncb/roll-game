@@ -5,6 +5,7 @@
  * strokes stay visible as ash until they crumble.
  */
 import { vec2 } from "gl-matrix";
+import type { Coordinates, EmitGameEvent } from "../game-events";
 import { fiberColorSteps, type ColonyTuning } from "./config";
 import type { GrowthDomain } from "./domain";
 import type { ColonyPalette } from "./palette";
@@ -77,8 +78,7 @@ export class FungalFabric {
   constructor(
     private readonly palette: ColonyPalette,
     private readonly tuning: Readonly<ColonyTuning>,
-    private readonly domain: GrowthDomain,
-    private readonly releaseAsh?: (position: vec2, amount: number) => void
+    private readonly domain: GrowthDomain
   ) {}
 
   density(p: vec2, kind: FiberKind) {
@@ -146,10 +146,10 @@ export class FungalFabric {
     fibers.tiles.clear();
   }
 
-  crumble(time: number) {
+  crumble(time: number, emit: EmitGameEvent) {
     if (!this.ash.size) return;
     const spacing = this.tuning.ashBurstSpacing;
-    const bursts = new Map<string, { position: vec2; amount: number }>();
+    const bursts = new Map<string, { position: Coordinates; amount: number }>();
     for (const [fibers, until] of this.ash) {
       if (time < until) continue;
       this.ash.delete(fibers);
@@ -161,18 +161,17 @@ export class FungalFabric {
           tile.dirty = true;
           if (!tile.visible.size) this.tiles.delete(key);
         }
-        if (!this.releaseAsh) continue;
         const x = (s.a[0] + s.b[0]) / 2,
           y = (s.a[1] + s.b[1]) / 2;
         const key = Math.floor(x / spacing) + "," + Math.floor(y / spacing);
         const amount = vec2.distance(s.a, s.b);
         const burst = bursts.get(key);
         if (burst) burst.amount += amount;
-        else bursts.set(key, { position: vec2.fromValues(x, y), amount });
+        else bursts.set(key, { position: [x, y], amount });
       }
     }
     for (const { position, amount } of bursts.values())
-      this.releaseAsh?.(position, Math.min(1, amount / spacing));
+      emit("ashCrumbled", { position, strength: Math.min(1, amount / spacing) }, time);
   }
 
   nearby(a: vec2, b: vec2, radius: number, includeMinor: boolean) {

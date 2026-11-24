@@ -12,6 +12,7 @@ import { playerConfig } from "./config";
 import { approach } from "../utils/math";
 import type { FungalGem } from "../fungus/gem";
 import type { Player } from "./player";
+import type { EmitGameEvent } from "../game-events";
 
 // The level identifies the first target; only a clingable hit supplies a movement anchor.
 export type BeamHit =
@@ -172,7 +173,7 @@ export class PlayerGun {
     } else this.finish();
   }
 
-  update(dt: number) {
+  update(dt: number, emit: EmitGameEvent) {
     const shot = this.shot;
     // Even a point-blank hit completes the outward stroke before the barrel stows.
     const reach = approach(
@@ -219,7 +220,7 @@ export class PlayerGun {
         const latchLength = vec2.distance(this.muzzle.localToWorld([0, 0]), socket);
         if (result.kind === "gem") {
           const grip = result.gem.visual.worldToLocal(result.point);
-          result.gem.reelTo(this.owner, gun.reelSpeed);
+          result.gem.reelTo(this.owner, gun.reelSpeed, emit);
           this.shot = {
             kind: "reeling",
             gem: result.gem,
@@ -243,7 +244,8 @@ export class PlayerGun {
           const velocity = tipVelocity(shot.direction, hitReach, mountVelocity);
           result.target.takePunch(
             result.point,
-            punchImpact(velocity, result.normal, result.target.body.vel)
+            punchImpact(velocity, result.normal, result.target.body.vel),
+            emit
           );
         }
         this.retract(shot.head, shot.direction);

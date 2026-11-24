@@ -257,7 +257,7 @@ function startGame(
       ctx.scale(width / camera.width, height / camera.height);
       const alpha = accumulator / stepSeconds;
       level.draw(ctx, alpha, reducedMotion.matches);
-      const borderOpacity = level.impactBorderOpacity(alpha);
+      const borderOpacity = level.presentation.impactBorderOpacity(alpha);
       if (borderOpacity !== previousBorderOpacity) {
         host.style.setProperty("--impact-border-opacity", String(borderOpacity));
         previousBorderOpacity = borderOpacity;

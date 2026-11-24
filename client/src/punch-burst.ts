@@ -1,4 +1,4 @@
-import { vec2 } from "gl-matrix";
+import { vec2, type ReadonlyVec2 } from "gl-matrix";
 import { Drawable2D } from "./engine/drawable";
 import { lerp, tau } from "./utils/math";
 
@@ -31,8 +31,8 @@ export class PunchBurst {
   expiresAt: number;
 
   constructor(
-    at: vec2,
-    direction: vec2,
+    at: ReadonlyVec2,
+    direction: ReadonlyVec2,
     strength: number,
     born: number,
     readonly target: Drawable2D,

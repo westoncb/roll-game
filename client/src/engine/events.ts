@@ -11,7 +11,7 @@ type Snapshot<Data> = Data extends Scalar
 
 /** Games declare a data object for each string kind. Runtime capture checks plain
  * prototypes and cycles, which TypeScript's structural types cannot express. */
-type EventMap<Events> = {
+export type EventMap<Events> = {
   [Kind in keyof Events]-?: Kind extends string ? object & Snapshot<Events[Kind]> : never;
 };
 type EventKind<Events> = keyof Events & string;
