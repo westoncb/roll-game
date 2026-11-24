@@ -1,5 +1,6 @@
-import { mat2d, type ReadonlyMat2d, type ReadonlyVec2 } from "gl-matrix";
-import type { Drawable2D } from "../drawable";
+import type { Effect, EffectHandle, EffectPlayback, EffectStep } from "../effects/effect";
+import { EffectPose, type EffectOrigin } from "../effects/pose";
+import { EffectScheduler } from "../effects/scheduler";
 import { lerp } from "../../utils/math";
 import {
   EmitterState,
@@ -9,11 +10,9 @@ import {
 } from "./emitter";
 import { drawEmitter } from "./render";
 
-export type EffectOrigin =
-  | { kind: "world"; position: ReadonlyVec2; angle?: number }
-  | { kind: "attached"; node: Drawable2D; offset?: ReadonlyVec2; angle?: number };
+export type { EffectOrigin } from "../effects/pose";
 
-export interface EffectHandle {
+export interface ParticleHandle extends EffectHandle {
   /** End emission. Existing particles finish their lifetimes. */
   stop(): void;
   /** Freeze the current world pose before removing an attached node. */
@@ -26,124 +25,135 @@ export interface EffectOptions {
 
 export type EffectPlayer = Pick<ParticleSystem, "play">;
 
-/** State shared by the emitters started together in one play call. */
-class Playback implements EffectHandle {
+/** One play of an asset shares a pose and random sequence across its emitters. */
+class ParticlePlayback {
   readonly emitters: EmitterState[];
-  started?: number;
-  private node?: Drawable2D;
-  private readonly local = mat2d.create();
-  private readonly world = mat2d.create();
-  private readonly nodePose = mat2d.create();
+  readonly pose: EffectPose;
+  tick?: EffectStep;
+  releaseAt = Infinity;
 
-  constructor(effect: ParticleEffect, origin: EffectOrigin, strength: number) {
-    const offset = origin.kind === "world" ? origin.position : origin.offset;
-    mat2d.fromRotation(this.local, origin.angle ?? 0);
-    this.local[4] = offset?.[0] ?? 0;
-    this.local[5] = offset?.[1] ?? 0;
-    if (origin.kind === "attached") this.node = origin.node;
-
-    let seed = effect.fixedSeed ?? Math.floor(Math.random() * 0x100000000);
+  constructor(asset: ParticleEffect, origin: EffectOrigin, options: EffectOptions) {
+    this.pose = new EffectPose(origin);
+    const strength = Math.max(0, Math.min(1, options.strength ?? 1));
+    let seed = asset.fixedSeed ?? Math.floor(Math.random() * 0x100000000);
     const sample = (value: SpawnValue) => {
       if (typeof value === "number") return value;
       seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
       return lerp(value[0], value[1], seed / 0x100000000);
     };
-    this.emitters = effect.emitters.map(
+    this.emitters = asset.emitters.map(
       (emitter) => new EmitterState(emitter, strength, sample)
     );
   }
 
-  stop() {
-    for (const emitter of this.emitters) emitter.stop();
-  }
-
-  detach() {
-    if (!this.node) return;
-    mat2d.copy(this.local, this.worldFrame(this.node.worldMatrix(this.nodePose)));
-    this.node = undefined;
-  }
-
-  frameAt(alpha: number): ReadonlyMat2d {
-    return this.node
-      ? this.worldFrame(this.node.worldMatrixAt(alpha, this.nodePose))
-      : this.local;
-  }
-
-  renderFrame(): ReadonlyMat2d {
-    return this.node ? this.worldFrame(this.node.renderWorldMatrix) : this.local;
-  }
-
-  /** Node scale positions the attachment without resizing its particles. */
-  private worldFrame(parent: ReadonlyMat2d) {
-    mat2d.multiply(this.world, parent, this.local);
-    const angle = Math.atan2(this.world[1], this.world[0]);
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    return mat2d.set(this.world, c, s, -s, c, this.world[4], this.world[5]);
+  draw(ctx: CanvasRenderingContext2D, pass: ParticlePass, alpha: number) {
+    if (!this.tick) return;
+    const time = lerp(this.tick.tickStart, this.tick.end, alpha);
+    for (const state of this.emitters) {
+      if ((state.emitter.pass ?? "front") !== pass || !state.particles.length) continue;
+      const frame = state.emitter.space === "local" ? this.pose.renderFrame() : undefined;
+      drawEmitter(ctx, state, time, frame);
+    }
   }
 }
 
 export class ParticleSystem {
-  private readonly playbacks = new Set<Playback>();
-  private previousTime = 0;
-  private time = 0;
+  private readonly playing = new Set<ParticlePlayback>();
+  private budgetTick = -Infinity;
+  private capacity = 0;
 
-  constructor(private readonly maxParticles = 4096) {
+  /** Share a scheduler for composed and direct plays. A standalone pool owns its scheduler. */
+  constructor(
+    private readonly maxParticles = 4096,
+    private readonly scheduler = new EffectScheduler()
+  ) {
     if (!Number.isSafeInteger(maxParticles) || maxParticles < 0)
       throw new RangeError("Particle budget must be a nonnegative integer.");
   }
 
   get active() {
-    return this.playbacks.size > 0;
+    return this.playing.size > 0;
   }
 
-  /** Playback begins at the next fixed-step boundary, after attachments have been posed. */
+  /** A composable play of this asset, using this system's budget and drawing passes.
+   * All plays sharing the pool use the same simulation tick boundaries. */
+  effect(asset: ParticleEffect, origin: EffectOrigin, options: EffectOptions = {}): Effect {
+    return {
+      kind: "leaf",
+      start: (time) => this.start(new ParticlePlayback(asset, origin, options), time)
+    };
+  }
+
+  /** Direct plays begin at the next fixed-step boundary, after attachments have been posed. */
   play(
-    effect: ParticleEffect,
+    asset: ParticleEffect,
     origin: EffectOrigin,
     options: EffectOptions = {}
-  ): EffectHandle {
-    const strength = Math.max(0, Math.min(1, options.strength ?? 1));
-    const playback = new Playback(effect, origin, strength);
-    this.playbacks.add(playback);
-    return playback;
+  ): ParticleHandle {
+    const playback = new ParticlePlayback(asset, origin, options);
+    this.playing.add(playback);
+    this.scheduler.play(
+      { kind: "leaf", start: (time) => this.start(playback, time) },
+      "nextTick"
+    );
+    const release = (time = this.scheduler.now) => {
+      if (!Number.isFinite(time) || time < this.scheduler.now)
+        throw new RangeError("Particle release must be at or after the current tick.");
+      playback.releaseAt = Math.min(playback.releaseAt, time);
+    };
+    return {
+      release,
+      stop: release,
+      detach: () => playback.pose.detach()
+    };
   }
 
+  /** Convenience for standalone use. With a shared scheduler, advance it once per tick. */
   step(dt: number) {
     if (!Number.isFinite(dt) || dt <= 0)
       throw new RangeError("Particle step must be positive and finite.");
-    this.previousTime = this.time;
-    this.time += dt;
+    this.scheduler.advanceTo(this.scheduler.now + dt);
+  }
 
-    let capacity = this.maxParticles;
-    for (const playback of this.playbacks) {
-      for (const emitter of playback.emitters) {
-        emitter.retire(this.previousTime);
-        capacity -= emitter.particles.length;
+  private start(playback: ParticlePlayback, start: number): EffectPlayback {
+    this.playing.add(playback);
+    return {
+      advance: (step) => {
+        this.prepareBudget(step.tickStart);
+        playback.tick = step;
+        const release = Math.min(playback.releaseAt, step.releasedAt ?? Infinity);
+        const through = Math.min(step.end, release);
+        const frameAt = (born: number) =>
+          playback.pose.frameAt((born - step.tickStart) / (step.end - step.tickStart));
+        let end = start;
+        for (const emitter of playback.emitters) {
+          this.capacity -= emitter.emit(start, through, this.capacity, frameAt);
+          if (release <= step.end) emitter.stop(release);
+          end = Math.max(end, emitter.finishedAt);
+        }
+        return end <= step.end ? end : undefined;
+      },
+      dispose: () => {
+        playback.pose.detach();
+        this.playing.delete(playback);
       }
-    }
-    for (const playback of this.playbacks) {
-      const start = (playback.started ??= this.time);
-      const frameAt = (born: number) =>
-        playback.frameAt(Math.max(0, Math.min(1, (born - this.previousTime) / dt)));
+    };
+  }
+
+  /** Retain the particles visible anywhere in the latest interpolation interval. */
+  private prepareBudget(tickStart: number) {
+    if (tickStart === this.budgetTick) return;
+    this.budgetTick = tickStart;
+    this.capacity = this.maxParticles;
+    for (const playback of this.playing) {
       for (const emitter of playback.emitters) {
-        capacity -= emitter.emit(start, this.time, capacity, frameAt);
-      }
-      if (playback.emitters.every((emitter) => emitter.finished)) {
-        playback.detach();
-        this.playbacks.delete(playback);
+        emitter.retire(tickStart);
+        this.capacity -= emitter.particles.length;
       }
     }
   }
 
   draw(ctx: CanvasRenderingContext2D, pass: ParticlePass, alpha = 1) {
-    const time = lerp(this.previousTime, this.time, alpha);
-    for (const playback of this.playbacks) {
-      for (const state of playback.emitters) {
-        if ((state.emitter.pass ?? "front") !== pass || !state.particles.length) continue;
-        const frame = state.emitter.space === "local" ? playback.renderFrame() : undefined;
-        drawEmitter(ctx, state, time, frame);
-      }
-    }
+    for (const playback of this.playing) playback.draw(ctx, pass, alpha);
   }
 }

@@ -1,14 +1,14 @@
 import type { ReadonlyMat2d } from "gl-matrix";
 import { lerp } from "../../utils/math.ts";
+import type { Keyframes } from "../effects/curve.ts";
 import type { Particle } from "./particle.ts";
+
+export type OverLife<T> = T | Keyframes<T>;
 
 /** A range is sampled uniformly once per particle at birth. */
 export type SpawnValue = number | readonly [min: number, max: number];
 type Point = readonly [x: number, y: number];
 type StrengthScale = readonly [atZero: number, atOne: number];
-type Key<T> = { readonly at: number; readonly value: T };
-/** Keys are in increasing order over normalized lifetime, with constant end values. */
-export type OverLife<T> = T | readonly [Key<T>, ...Key<T>[]];
 export type ParticlePass = "behind" | "front";
 
 /** Times are seconds, angles are radians, and distances are world units. */
@@ -62,7 +62,8 @@ export class EmitterState {
   private readonly speedScale: number;
   private readonly sizeScale: number;
   private scheduled = 0;
-  private emitting = true;
+  private stoppedAt = Infinity;
+  private lastDeath = -Infinity;
 
   constructor(emitter: Emitter, strength: number, sample: (value: SpawnValue) => number) {
     this.emitter = emitter;
@@ -74,12 +75,12 @@ export class EmitterState {
     this.sizeScale = scale(emitter.strength?.size);
   }
 
-  stop() {
-    this.emitting = false;
+  stop(time: number) {
+    this.stoppedAt = Math.min(this.stoppedAt, time);
   }
 
-  get finished() {
-    return !this.emitting && this.particles.length === 0;
+  get finishedAt() {
+    return Math.max(this.stoppedAt, this.lastDeath);
   }
 
   /** Keep particles that were alive anywhere in the interval still being rendered. */
@@ -98,10 +99,10 @@ export class EmitterState {
     worldFrameAt: (born: number) => ReadonlyMat2d
   ) {
     const start = started + (this.emitter.delay ?? 0);
-    if (!this.emitting || time < start) return 0;
+    if (this.stoppedAt !== Infinity || time < start) return 0;
     const schedule = this.emitter.emission;
     if (schedule.kind === "burst") {
-      this.stop();
+      this.stop(start);
       const count = Math.min(capacity, Math.round(schedule.count * this.amountScale));
       this.spawn(start, count, worldFrameAt);
       return count;
@@ -110,7 +111,8 @@ export class EmitterState {
     const rate = schedule.perSecond * this.amountScale;
     const elapsed = time - start;
     const duration = schedule.duration ?? Infinity;
-    if (elapsed >= duration || rate <= 0) this.stop();
+    if (rate <= 0) this.stop(start);
+    else if (time >= start + duration) this.stop(start + duration);
     if (rate <= 0) return 0;
 
     // Derive the total from elapsed time so fractional births carry between ticks.
@@ -134,7 +136,11 @@ export class EmitterState {
   ) {
     if (count === 0) return;
     const frame = this.emitter.space === "local" ? undefined : worldFrameAt(born);
-    for (let i = 0; i < count; i++) this.particles.push(this.createParticle(born, frame));
+    for (let i = 0; i < count; i++) {
+      const particle = this.createParticle(born, frame);
+      this.lastDeath = Math.max(this.lastDeath, born + particle.lifetime);
+      this.particles.push(particle);
+    }
   }
 
   private createParticle(born: number, frame?: ReadonlyMat2d): Particle {

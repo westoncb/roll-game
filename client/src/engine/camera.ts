@@ -1,6 +1,8 @@
 import { vec2, type ReadonlyVec2 } from "gl-matrix";
 import { tau } from "../utils/math";
 import { applyMatrix, Transform2D } from "./transform";
+import type { Effect } from "./effects/effect";
+import type { Curve } from "./effects/curve";
 
 type Size = { width: number; height: number };
 
@@ -14,7 +16,7 @@ export type CameraShake = {
   /** Relative amplitude of the vibration perpendicular to the main axis. */
   crossAxis?: number;
   /** Amplitude multiplier over the normalized lifetime [0, 1]. */
-  envelope?: (progress: number) => number;
+  envelope?: Curve<number>;
 };
 
 type ShakePulse = Required<Omit<CameraShake, "direction">> & {
@@ -22,6 +24,8 @@ type ShakePulse = Required<Omit<CameraShake, "direction">> & {
   axisX: number;
   axisY: number;
   phase: number;
+  end: number;
+  managed: boolean;
 };
 
 const maxShakePixels = 14;
@@ -31,7 +35,7 @@ const quadraticDecay = (progress: number) => (1 - progress) ** 2;
 export class Camera {
   private readonly screenOffset = new Transform2D();
   private readonly view = new Transform2D(this.screenOffset);
-  private readonly pulses: ShakePulse[] = [];
+  private readonly pulses = new Set<ShakePulse>();
 
   constructor(private readonly playfield: Size) {}
 
@@ -59,7 +63,31 @@ export class Camera {
   }
 
   /** Start a pulse on the same simulation clock used by sampleShake. */
-  shake(
+  shake(shake: CameraShake, time: number) {
+    this.addPulse(shake, time, false);
+  }
+
+  /** Compose a shake with other effects. The camera mixes it with all other pulses. */
+  shakeEffect(shake: CameraShake): Effect {
+    return {
+      kind: "leaf",
+      start: (time) => {
+        const pulse = this.addPulse(shake, time, true);
+        return {
+          advance: (step) => {
+            if (!pulse) return time;
+            pulse.end = Math.min(pulse.end, step.releasedAt ?? Infinity);
+            return pulse.end <= step.end ? pulse.end : undefined;
+          },
+          dispose: () => {
+            if (pulse) this.pulses.delete(pulse);
+          }
+        };
+      }
+    };
+  }
+
+  private addPulse(
     {
       amplitude,
       duration,
@@ -68,12 +96,13 @@ export class Camera {
       crossAxis = 0.25,
       envelope = quadraticDecay
     }: CameraShake,
-    time: number
+    time: number,
+    managed: boolean
   ) {
     if (!(amplitude > 0 && duration > 0 && frequency > 0)) return;
     const directed = direction && (direction[0] !== 0 || direction[1] !== 0);
     const angle = directed ? Math.atan2(direction[1], direction[0]) : Math.random() * tau;
-    this.pulses.push({
+    const pulse = {
       amplitude,
       duration,
       frequency,
@@ -82,8 +111,12 @@ export class Camera {
       start: time,
       axisX: Math.cos(angle),
       axisY: Math.sin(angle),
-      phase: directed ? Math.PI / 2 : 0
-    });
+      phase: directed ? Math.PI / 2 : 0,
+      end: time + duration,
+      managed
+    };
+    this.pulses.add(pulse);
+    return pulse;
   }
 
   sampleShake(
@@ -99,11 +132,10 @@ export class Camera {
       x = rumble.amplitude * Math.sin(cycle);
       y = rumble.amplitude * (rumble.crossAxis ?? 0.75) * Math.sin(cycle * 1.37);
     }
-    for (let i = this.pulses.length - 1; i >= 0; i--) {
-      const pulse = this.pulses[i];
+    for (const pulse of this.pulses) {
       const age = time - pulse.start;
-      if (age >= pulse.duration) {
-        this.pulses.splice(i, 1);
+      if (time >= pulse.end) {
+        if (!pulse.managed) this.pulses.delete(pulse);
         continue;
       }
       if (age < 0 || reducedMotion) continue;
