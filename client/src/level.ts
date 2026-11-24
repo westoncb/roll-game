@@ -181,7 +181,7 @@ export class Level {
           { strength }
         );
       },
-      defeated: (victim, attacker) => {
+      defeated: (victim) => {
         for (const effect of this.effects) {
           if (effect instanceof PunchBurst && effect.target === victim.visual)
             effect.fadeOnKnockout(this.time);
@@ -199,10 +199,6 @@ export class Level {
           position: victim.body.pos,
           angle: Math.atan2(victim.body.vel[1], victim.body.vel[0])
         });
-        attacker?.award("knockout");
-        victim.punchedBy = null;
-        if (this.rival) victim.respawnRemaining = respawnDelaySeconds;
-        else this.result = "player-contact";
       }
     };
     this.player = new Player(
@@ -210,7 +206,8 @@ export class Level {
       this.ground,
       this.particles,
       castFor(() => this.rival),
-      events
+      events,
+      this.resolveDefeat
     );
     this.entities = [...this.fungalColonies, this.player];
     if (data.rivalStart) {
@@ -221,6 +218,7 @@ export class Level {
         this.particles,
         cast,
         events,
+        this.resolveDefeat,
         rivalColors
       );
       this.rivalController = new RivalController(
@@ -242,6 +240,16 @@ export class Level {
         );
     }
   }
+
+  private readonly resolveDefeat = (victim: Player) => {
+    if (!this.rival) {
+      this.result = "player-contact";
+      return;
+    }
+    victim.respawnRemaining = respawnDelaySeconds;
+    const opponent = victim === this.player ? this.rival : this.player;
+    opponent.award("knockout");
+  };
 
   private resolveContact(actor: Player, from: vec2, dt: number) {
     if (!actor.health) return 0;

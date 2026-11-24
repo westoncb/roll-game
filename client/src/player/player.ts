@@ -79,7 +79,7 @@ export interface PlayerEvents {
   scored(player: Player, points: number): void;
   healthChanged(player: Player, delta: number, source: HealthSource): void;
   punched(victim: Player, at: vec2, direction: vec2, strength: number): void;
-  defeated(player: Player, attacker: Player | null): void;
+  defeated(player: Player): void;
 }
 
 type FreeFoot = { kind: "free"; offset: number; angularVelocity: number };
@@ -184,10 +184,8 @@ export class Player implements Entity {
   knockouts = 0;
   health = maxHealth;
   inFungus = false;
-  private fungusAttacker: Player | null = null;
   readonly home: vec2;
   respawnRemaining = 0;
-  punchedBy: Player | null = null;
   spawnProtection: number | "overgrown" = 0;
   get score() {
     return this.gems + knockoutPoints * this.knockouts;
@@ -202,6 +200,7 @@ export class Player implements Entity {
     private readonly particles: EffectPlayer,
     castBeam: CastBeam,
     private readonly events: PlayerEvents,
+    private readonly resolveDefeat: (victim: Player) => void,
     private readonly colors: PlayerColors = playerConfig.colors
   ) {
     this.gun = new PlayerGun(this.stance, this, castBeam);
@@ -225,8 +224,6 @@ export class Player implements Entity {
   respawn(start: vec2, ground: GroundPolygon[]) {
     this.health = maxHealth;
     this.inFungus = false;
-    this.fungusAttacker = null;
-    this.punchedBy = null;
     this.support = null;
     this.groundSpeed = this.wallRight = 0;
     this.jumpHeldSeconds = this.launchCharge = null;
@@ -347,37 +344,32 @@ export class Player implements Entity {
   award(kind: "gem" | "knockout") {
     if (kind === "gem") {
       this.gems++;
-      this.changeHealth(gemHealing, { kind: "gem" }, null);
+      this.changeHealth(gemHealing, { kind: "gem" });
     } else this.knockouts++;
     this.events.scored(this, kind === "gem" ? 1 : knockoutPoints);
   }
 
-  private changeHealth(delta: number, source: HealthSource, attacker: Player | null) {
+  private changeHealth(delta: number, source: HealthSource) {
     if (!this.health) return;
     const before = this.health;
     this.health = Math.max(0, Math.min(maxHealth, before + delta));
     if (this.health < 1e-6) this.health = 0;
     if (this.health === before) return;
     this.events.healthChanged(this, this.health - before, source);
-    if (!this.health) this.events.defeated(this, attacker);
+    if (!this.health) {
+      this.events.defeated(this);
+      this.resolveDefeat(this);
+    }
   }
 
   exposeToFungus(seconds: number, touchingAtEnd: boolean) {
-    // Keep credit for the same exposure even if the knockback stops inside the colony.
-    if (!this.inFungus) this.fungusAttacker = this.punchedBy;
     if (seconds > 0)
-      this.changeHealth(
-        -fungusDamagePerSecond * seconds,
-        { kind: "fungus" },
-        this.fungusAttacker
-      );
+      this.changeHealth(-fungusDamagePerSecond * seconds, { kind: "fungus" });
     this.inFungus = touchingAtEnd && this.health > 0;
-    if (!this.inFungus) this.fungusAttacker = null;
   }
 
-  takePunch(attacker: Player, at: vec2, { normal, impulse, damage }: PunchImpact) {
+  takePunch(at: vec2, { normal, impulse, damage }: PunchImpact) {
     if (!this.health || this.spawnProtection || impulse <= 0) return;
-    this.punchedBy = attacker;
     if (this.gun.anchor) this.gun.finish();
     this.support = null;
     this.launchCharge = this.jumpHeldSeconds = null;
@@ -386,7 +378,7 @@ export class Player implements Entity {
     const strength = impulse / playerConfig.gun.punchImpulse;
     this.screen.showImpact();
     this.events.punched(this, at, normal, strength);
-    this.changeHealth(-damage, { kind: "punch", direction: normal, strength }, attacker);
+    this.changeHealth(-damage, { kind: "punch", direction: normal, strength });
   }
 
   private get bootProgress() {
@@ -456,14 +448,6 @@ export class Player implements Entity {
       const reversing = drive * this.groundSpeed < 0;
       const stride = this.strideScale;
       const targetSpeed = reversing ? 0 : drive * movement.topSpeed * stride;
-      // A landing can carry the punch into a slide. Once the robot stops, jumps,
-      // or its own drive supplies the speed, subsequent contact is its own fall.
-      if (
-        this.launchCharge !== null ||
-        this.groundSpeed === 0 ||
-        (!reversing && Math.abs(this.groundSpeed) <= Math.abs(targetSpeed))
-      )
-        this.punchedBy = null;
       let rate: number = movement.coastDeceleration;
       if (reversing) rate = movement.brakeDeceleration;
       else if (drive) {
@@ -515,7 +499,6 @@ export class Player implements Entity {
     }
     this.shell.rotation += (this.groundSpeed * dt) / body.radius;
     if (pull) {
-      this.punchedBy = null;
       vec2.copy(body.vel, pull);
       vec2.zero(body.accel);
     } else vec2.set(body.accel, 0, gravityY);

@@ -25,7 +25,7 @@ In the test arena, you have red feet and the computer rival has turquoise feet. 
 
 Both robots start with 100 HP. Living fungus drains 36 HP per second until you escape. A direct, close-range glove hit against a stationary robot deals about 30 damage. Knockback scales with closing speed along the contact normal, and damage scales with its square. Glancing hits and contacts near full extension are weaker. Moving into the glove can make a hit harder.
 
-Each gem scores one point. A knockout earns ten points if your glove lands the finishing hit or knocks your opponent into the fungus that finishes them. Falling into fungus on your own costs only the two-second respawn delay. Robots return near their start with full health. An amber shield and a BOOT readout on the TV mark 0.75 seconds of protection. If a robot has to respawn inside fungus, the countdown starts once it gets clear. When the final gem is reeled in, the higher score wins. Equal scores draw.
+Each gem scores one point. In a duel, every knockout gives the opposing robot ten points, including when a robot falls into fungus on its own. The defeated robot respawns near its start after two seconds with full health. An amber shield and a BOOT readout on the TV mark 0.75 seconds of protection. If a robot has to respawn inside fungus, the countdown starts once it gets clear. When the final gem is reeled in, the higher score wins. Equal scores draw.
 
 ## Level files
 

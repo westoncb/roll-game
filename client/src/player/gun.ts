@@ -242,7 +242,6 @@ export class PlayerGun {
           vec2.scale(mountVelocity, mountVelocity, 1 / dt);
           const velocity = tipVelocity(shot.direction, hitReach, mountVelocity);
           result.target.takePunch(
-            this.owner,
             result.point,
             punchImpact(velocity, result.normal, result.target.body.vel)
           );
